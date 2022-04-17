@@ -1,0 +1,14 @@
+[package]
+name = "web_socket_template"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web="3.2.0"
+actix-web-actors="3"
+actix="0.10.0"
+uuid= { version="0.8", features=["v4", "serde"]}
+colored = "2.0.0"
+lazy_static = "1.4.0"
