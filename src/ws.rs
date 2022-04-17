@@ -62,25 +62,35 @@ impl Actor for WsConn {
 
 impl WsConn {
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
+
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 println!("Disconnecting due to failed heartbeat");
+
                 act.lobby_addr.do_send(Disconnect { id: act.id, room_id: act.room });
                 ctx.stop();
                 return;
+
             }
 
             ctx.ping(b"hi");
+
         });
+
     }
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
+
     fn handle(&mut self, packet: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+
         match packet {
+
             Ok(ws::Message::Ping(packet)) => {
                 self.hb = Instant::now();
                 ctx.pong(&packet);
+                
             }
             Ok(ws::Message::Pong(_)) => {
                 self.hb = Instant::now();
@@ -101,8 +111,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
                 self.room
             )),
             Err(e) => panic!("{}", e),
+
         }
+        
     }
+
 }
 
 impl Handler<WsMessage> for WsConn {

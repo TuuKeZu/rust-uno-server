@@ -36,7 +36,10 @@ impl Packet {
 
         let res = match v {
             Ok(v) => v,
-            Err(e) => serde_json::from_str("{}").unwrap()
+            Err(e) => {
+                println!("{:?}", e);
+                serde_json::from_str("{\"\"}").unwrap()
+            }
         };
 
         res
@@ -44,7 +47,7 @@ impl Packet {
 
     pub fn new(id: Uuid, data: String, room_id: Uuid) -> Packet {
         Packet {
-            id, 
+            id,
             data: String::from(&data),
             room_id,
             json: Packet::try_parse(&data)
