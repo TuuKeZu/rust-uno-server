@@ -1,5 +1,5 @@
 use actix::{fut, ActorContext, WrapFuture, ContextFutureSpawner, ActorFuture};
-use crate::messages::{Disconnect, Connect, WsMessage, ClientActorMessage};
+use crate::messages::{Disconnect, Connect, WsMessage, Packet};
 use crate::lobby::Lobby; 
 use actix::{Actor, Addr, Running, StreamHandler};
 use actix::{AsyncContext, Handler};
@@ -76,11 +76,11 @@ impl WsConn {
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Ping(msg)) => {
+    fn handle(&mut self, packet: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match packet {
+            Ok(ws::Message::Ping(packet)) => {
                 self.hb = Instant::now();
-                ctx.pong(&msg);
+                ctx.pong(&packet);
             }
             Ok(ws::Message::Pong(_)) => {
                 self.hb = Instant::now();
@@ -91,15 +91,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
                 ctx.stop();
             }
             Ok(ws::Message::Continuation(_)) => {
+                // TODO: Handle continuation requests
                 ctx.stop();
             }
             Ok(ws::Message::Nop) => (),
-            Ok(Text(s)) => self.lobby_addr.do_send(ClientActorMessage {
-                id: self.id,
-                msg: s,
-                room_id: self.room
-            }),
-            
+            Ok(Text(s)) => self.lobby_addr.do_send(Packet::new(
+                self.id,
+                s,
+                self.room
+            )),
             Err(e) => panic!("{}", e),
         }
     }

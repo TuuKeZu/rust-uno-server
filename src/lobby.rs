@@ -1,4 +1,4 @@
-use crate::messages::{ClientActorMessage, Connect, Disconnect, WsMessage};
+use crate::messages::{Packet, Connect, Disconnect, WsMessage};
 use actix::prelude::{Actor, Context, Handler, Recipient};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -37,25 +37,25 @@ impl Actor for Lobby {
 impl Handler<Disconnect> for Lobby {
     type Result = ();
 
-    fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
-        if self.sessions.remove(&msg.id).is_some() {
+    fn handle(&mut self, packet: Disconnect, _: &mut Context<Self>) {
+        if self.sessions.remove(&packet.id).is_some() {
             self.rooms
-            .get(&msg.room_id)
+            .get(&packet.room_id)
             .unwrap()
             .iter()
-            .filter(|conn_id| *conn_id.to_owned() != msg.id)
+            .filter(|conn_id| *conn_id.to_owned() != packet.id)
             .for_each(|user_id| self
-                .send_message(&format!("{} disconnected.", msg.id), user_id
+                .send_message(&format!("{} disconnected.", packet.id), user_id
             ));
 
-            println!("[{}] User Disconnected: {}",  msg.room_id, msg.id);
+            println!("[{}] User Disconnected: {}",  packet.room_id, packet.id);
 
-            if let Some(lobby) = self.rooms.get_mut(&msg.room_id) {
+            if let Some(lobby) = self.rooms.get_mut(&packet.room_id) {
                 if lobby.len() > 1 {
-                    lobby.remove(&msg.id);
+                    lobby.remove(&packet.id);
                 }
                 else{
-                    self.rooms.remove(&msg.room_id);
+                    self.rooms.remove(&packet.room_id);
                 }
             }
         }
@@ -65,38 +65,38 @@ impl Handler<Disconnect> for Lobby {
 impl Handler<Connect> for Lobby {
     type Result = ();
 
-    fn handle(&mut self, msg: Connect, _: &mut Context<Self>) -> Self::Result {
-        self.rooms.entry(msg.lobby_id).or_insert_with(HashSet::new).insert(msg.self_id);
+    fn handle(&mut self, packet: Connect, _: &mut Context<Self>) -> Self::Result {
+        self.rooms.entry(packet.lobby_id).or_insert_with(HashSet::new).insert(packet.self_id);
 
         self
             .rooms
-            .get(&msg.lobby_id)
+            .get(&packet.lobby_id)
             .unwrap()
             .iter()
-            .filter(|conn_id| *conn_id.to_owned() != msg.self_id)
-            .for_each(|conn_id| self.send_message(&format!("{} just joined!", msg.self_id), conn_id));
+            .filter(|conn_id| *conn_id.to_owned() != packet.self_id)
+            .for_each(|conn_id| self.send_message(&format!("{} just joined!", packet.self_id), conn_id));
 
         self.sessions.insert(
-            msg.self_id,
-            msg.addr,
+            packet.self_id,
+            packet.addr,
         );
 
-        self.send_message(&format!("your id is {}", msg.self_id), &msg.self_id);
-        println!("[{}] New user Joined: {}", msg.lobby_id, msg.self_id)
+        self.send_message(&format!("your id is {}", packet.self_id), &packet.self_id);
+        println!("[{}] New user Joined: {}", packet.lobby_id, packet.self_id)
     }
 }
 
-impl Handler<ClientActorMessage> for Lobby {
+impl Handler<Packet> for Lobby {
     type Result = ();
 
-    fn handle(&mut self, msg: ClientActorMessage, _ctx: &mut Context<Self>) -> Self::Result {
-        if msg.msg.starts_with("\\w") {
-            if let Some(id_to) = msg.msg.split(' ').collect::<Vec<&str>>().get(1) {
-                self.send_message(&msg.msg, &Uuid::parse_str(id_to).unwrap());
+    fn handle(&mut self, packet: Packet, _ctx: &mut Context<Self>) -> Self::Result {
+        if packet.data.starts_with("\\w") {
+            if let Some(id_to) = packet.data.split(' ').collect::<Vec<&str>>().get(1) {
+                self.send_message(&packet.data, &Uuid::parse_str(id_to).unwrap());
             }
         } else {
-            self.rooms.get(&msg.room_id).unwrap().iter().for_each(|client| self.send_message(&msg.msg, client));
-            println!("[{}] {} > {:?} ", msg.room_id, msg.id, msg.msg)
+            self.rooms.get(&packet.room_id).unwrap().iter().for_each(|client| self.send_message(&packet.data, client));
+            println!("[{}] {} > {:?} ", packet.room_id, packet.id, packet.json)
         }
     }
 }
