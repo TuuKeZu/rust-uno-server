@@ -40,7 +40,7 @@ impl Packet {
         let res = match v {
             Ok(v) => v,
             Err(e) => {
-                serde_json::from_str( &HTMLError::to_json(HTMLError::new(401, &e.to_string())) ).unwrap()
+                serde_json::from_str( &HTMLError::to_json(HTMLError::new(400, &e.to_string())) ).unwrap()
             }
         };
 

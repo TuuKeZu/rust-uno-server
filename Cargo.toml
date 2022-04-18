@@ -1,5 +1,5 @@
 [package]
-name = "web_socket_template"
+name = "uno_server"
 version = "0.1.0"
 edition = "2021"
 
@@ -14,3 +14,4 @@ colored = "2.0.0"
 lazy_static = "1.4.0"
 serde_json = "1"
 serde = "1.0.136"
+rand = "0.8.5"

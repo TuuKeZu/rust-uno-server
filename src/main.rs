@@ -6,6 +6,7 @@ mod packets;
 use lobby::Lobby;
 mod messages;
 mod start_connection;
+mod game;
 use start_connection::start_connection as start_connection_route;
 use actix::Actor;
 
