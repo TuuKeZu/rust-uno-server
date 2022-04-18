@@ -1,6 +1,6 @@
 use actix::{fut, ActorContext, WrapFuture, ContextFutureSpawner, ActorFuture};
 use crate::messages::{Disconnect, Connect, WsMessage, Packet};
-use crate::lobby::Lobby; 
+use crate::lobby::Lobby;
 use actix::{Actor, Addr, Running, StreamHandler};
 use actix::{AsyncContext, Handler};
 use actix_web_actors::ws;
@@ -61,6 +61,7 @@ impl Actor for WsConn {
 }
 
 impl WsConn {
+
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
 
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
@@ -79,6 +80,7 @@ impl WsConn {
         });
 
     }
+    
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
@@ -90,7 +92,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
             Ok(ws::Message::Ping(packet)) => {
                 self.hb = Instant::now();
                 ctx.pong(&packet);
-                
+
             }
             Ok(ws::Message::Pong(_)) => {
                 self.hb = Instant::now();
@@ -107,7 +109,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
             Ok(ws::Message::Nop) => (),
             Ok(Text(s)) => self.lobby_addr.do_send(Packet::new(
                 self.id,
-                s,
+                &s,
                 self.room
             )),
             Err(e) => panic!("{}", e),

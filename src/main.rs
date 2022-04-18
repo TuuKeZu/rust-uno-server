@@ -1,6 +1,8 @@
 mod ws;
 mod lobby;
 mod console;
+mod errors;
+mod packets;
 use lobby::Lobby;
 mod messages;
 mod start_connection;

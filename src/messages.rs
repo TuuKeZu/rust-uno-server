@@ -1,6 +1,8 @@
 use actix::prelude::{Message, Recipient};
+use crate::errors::HTMLError;
 use uuid::Uuid;
 use serde_json::{Result, Value};
+use serde::{Serialize, Deserialize};
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -23,6 +25,7 @@ pub struct Disconnect {
 
 #[derive(Message)]
 #[rtype(result = "()")]
+#[derive(Serialize, Deserialize)]
 pub struct Packet {
     pub id: Uuid,
     pub data: String,
@@ -37,20 +40,19 @@ impl Packet {
         let res = match v {
             Ok(v) => v,
             Err(e) => {
-                println!("{:?}", e);
-                serde_json::from_str("{\"\"}").unwrap()
+                serde_json::from_str( &HTMLError::to_json(HTMLError::new(401, &e.to_string())) ).unwrap()
             }
         };
 
         res
     }
 
-    pub fn new(id: Uuid, data: String, room_id: Uuid) -> Packet {
+    pub fn new(id: Uuid, data: &str, room_id: Uuid) -> Packet {
         Packet {
             id,
-            data: String::from(&data),
+            data: String::from(data),
             room_id,
-            json: Packet::try_parse(&data)
+            json: Packet::try_parse(data)
         }
     }
 }

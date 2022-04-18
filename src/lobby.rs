@@ -1,7 +1,11 @@
 use crate::messages::{Packet, Connect, Disconnect, WsMessage};
+use crate::errors::HTMLError;
+use crate::packets::*;
 use actix::prelude::{Actor, Context, Handler, Recipient};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+use serde_json::{Result, Value};
+
 
 type Socket = Recipient<WsMessage>;
 
@@ -27,6 +31,14 @@ impl Lobby {
         } else {
             println!("Couldn't find anyone to send message to");
         }
+    }
+
+    pub fn emit(&mut self, packet: &Packet, data: &str) {
+        self.send_message(data, &packet.id);
+    }
+
+    pub fn broadcast(&mut self, packet: &Packet, data: &str) {
+        self.rooms.get(&packet.room_id).unwrap().iter().for_each(|client| self.send_message(data, client))
     }
 } 
 
@@ -90,13 +102,39 @@ impl Handler<Packet> for Lobby {
     type Result = ();
 
     fn handle(&mut self, packet: Packet, _ctx: &mut Context<Self>) -> Self::Result {
-        if packet.data.starts_with("\\w") {
-            if let Some(id_to) = packet.data.split(' ').collect::<Vec<&str>>().get(1) {
-                self.send_message(&packet.data, &Uuid::parse_str(id_to).unwrap());
+        if packet.json.get("type").is_some() {
+
+            let r#type: String = packet.json.get("type").unwrap().to_string();
+
+            match &r#type as &str {
+
+                "\"ERROR\"" => {
+                    self.emit(&packet, &serde_json::to_string(&packet.json).unwrap());
+                }
+
+                "\"MESSAGE\"" => {
+                    let p: Result<MessagePacket> = MessagePacket::try_parse(&packet.data);
+
+                    match p {
+                        Ok(data) => {
+                            self.broadcast(&packet, &data.content);
+                        }
+                        Err(e) => {
+                            self.emit(&packet, &HTMLError::to_json(HTMLError::new(401, &e.to_string())) );
+                        }
+                    }
+                    
+                }
+
+                &_ => {
+                    println!("Unknown type.");
+                }
             }
-        } else {
-            self.rooms.get(&packet.room_id).unwrap().iter().for_each(|client| self.send_message(&packet.data, client));
-            println!("[{}] {} > {:?} ", packet.room_id, packet.id, packet.json)
         }
+        else { 
+            self.send_message(&HTMLError::to_json(HTMLError::new(400, "Missing request type.")), &packet.id);
+        }
+
+        println!("DEBUG: [{}] {} > {:?} ", packet.room_id, packet.id, packet.json)
     }
 }
