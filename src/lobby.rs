@@ -4,7 +4,7 @@ use crate::packets::*;
 use actix::prelude::{Actor, Context, Handler, Recipient};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-use serde_json::{Result, Value};
+use serde_json::Result;
 
 
 type Socket = Recipient<WsMessage>;
@@ -94,7 +94,7 @@ impl Handler<Connect> for Lobby {
         );
 
         self.send_message(&format!("your id is {}", packet.self_id), &packet.self_id);
-        println!("[{}] New user Joined: {}", packet.lobby_id, packet.self_id)
+        println!("[{}] New user Joined: {}", packet.lobby_id, packet.self_id);
     }
 }
 

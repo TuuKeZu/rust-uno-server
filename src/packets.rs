@@ -1,6 +1,4 @@
-use crate::errors::HTMLError;
-use uuid::Uuid;
-use serde_json::{Result, Value};
+use serde_json::Result;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
