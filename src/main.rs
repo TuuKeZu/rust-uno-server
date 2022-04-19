@@ -1,18 +1,16 @@
-mod ws;
-mod lobby;
 mod console;
 mod errors;
+mod lobby;
 mod packets;
+mod ws;
 use lobby::Lobby;
+mod game;
 mod messages;
 mod start_connection;
-mod game;
-use start_connection::start_connection as start_connection_route;
 use actix::Actor;
-
+use start_connection::start_connection as start_connection_route;
 
 use actix_web::{App, HttpServer};
-
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -28,5 +26,4 @@ async fn main() -> std::io::Result<()> {
     .bind("127.0.0.1:8080")?
     .run()
     .await
-
 }

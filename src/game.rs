@@ -1,10 +1,12 @@
 use crate::lobby::*;
-use uuid::Uuid;
-use std::collections::{HashMap};
-use rand::thread_rng;
-use rand::seq::SliceRandom;
-use actix::prelude::{Actor, Context, Handler, Recipient};
 use crate::messages::WsMessage;
+use crate::packets::*;
+use actix::prelude::{Actor, Context, Handler, Recipient};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
 
 // https://www.unorules.org/wp-content/uploads/2021/03/All-Uno-cards-how-many-cards-in-uno.png
 /*
@@ -39,6 +41,7 @@ pub struct Game {
     pub active: bool,
     pub players: HashMap<Uuid, Player>,
     pub spectators: HashMap<Uuid, Player>,
+    pub current_turn: usize,
 
     pub deck: Vec<Card>,
 }
@@ -50,7 +53,8 @@ impl Game {
             active: false,
             players: HashMap::new(),
             spectators: HashMap::new(),
-            deck: Card::generate_deck()
+            deck: Card::generate_deck(),
+            current_turn: 0
         }
     }
 
@@ -73,19 +77,15 @@ impl Game {
     }
 }
 
-
 impl Game {
-
     fn send_message(&self, message: &str, id: &Uuid) {
-
-        if let Some(socket_recipient) = self.players.get(id){
-            let _ = socket_recipient.socket
+        if let Some(socket_recipient) = self.players.get(id) {
+            let _ = socket_recipient
+                .socket
                 .do_send(WsMessage(message.to_owned()));
-            
         } else {
             println!("Couldn't find anyone to send message to");
         }
-
     }
 
     pub fn emit(&self, id: &Uuid, data: &str) {
@@ -113,15 +113,16 @@ impl Game {
 
     pub fn update_card_status(&self, self_id: &Uuid) {
         for id in self.players.keys() {
-
             if self_id == id {
-                self.emit(id, "here's my cards");
+                let p: PrivateGamePacket =
+                    PrivateGamePacket::new(self.players.get(id).unwrap().cards.clone());
+                self.emit(id, &PrivateGamePacket::to_json(p));
+            } else {
+                let p: PublicGamePacket =
+                    PublicGamePacket::new(id.to_owned(), self.players.get(id).unwrap().cards.len());
+                self.emit(id, &PublicGamePacket::to_json(p));
             }
-            else {
-                self.emit(id, "here's someone elses cards");
-            }
-
-        } 
+        }
     }
 
     pub fn draw_cards(&mut self, count: u8) -> Vec<Card> {
@@ -129,15 +130,14 @@ impl Game {
 
         for i in 0..count {
             l.push(self.deck.pop().unwrap());
+            println!("drawing cards");
         }
 
         l
     }
 }
 
-
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Player {
     pub id: Uuid,
     pub socket: Socket,
@@ -153,34 +153,36 @@ impl Player {
             socket: socket.to_owned(),
             username: String::from(username),
             is_host,
-            cards: Vec::new()
+            cards: Vec::new(),
         }
     }
 }
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Card {
     pub r#type: String,
     pub color: String,
 }
 
-impl Card { 
+impl Card {
     fn new(r#type: &str, color: &str) -> Card {
         Card {
             r#type: String::from(r#type),
-            color: String::from(color)
+            color: String::from(color),
         }
     }
 
     fn generate_deck() -> Vec<Card> {
         let mut l: Vec<Card> = Vec::new();
-        let types: [&str; 15] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "BLOCK", "REVERSE", "DRAW-2", "SWICTH", "DARW-4"];
+        let types: [&str; 15] = [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "BLOCK", "REVERSE", "DRAW-2",
+            "SWICTH", "DRAW-4",
+        ];
         let colors: [&str; 4] = ["RED", "YELLOW", "BLUE", "GREEN"];
-        
+
         for c in colors {
             for t in types {
-                l.push( Card::new(t, c) );
-                l.push( Card::new(t, c) );
+                l.push(Card::new(t, c));
+                l.push(Card::new(t, c));
             }
         }
         l.shuffle(&mut thread_rng());

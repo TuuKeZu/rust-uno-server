@@ -1,8 +1,8 @@
-use actix::prelude::{Message, Recipient};
 use crate::errors::HTMLError;
-use uuid::Uuid;
+use actix::prelude::{Message, Recipient};
+use serde::{Deserialize, Serialize};
 use serde_json::{Result, Value};
-use serde::{Serialize, Deserialize};
+use uuid::Uuid;
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -13,7 +13,7 @@ pub struct WsMessage(pub String);
 pub struct Connect {
     pub addr: Recipient<WsMessage>,
     pub lobby_id: Uuid,
-    pub self_id: Uuid
+    pub self_id: Uuid,
 }
 
 #[derive(Message)]
@@ -30,17 +30,18 @@ pub struct Packet {
     pub id: Uuid,
     pub data: String,
     pub json: Value,
-    pub room_id: Uuid
+    pub room_id: Uuid,
 }
 
 impl Packet {
-    pub fn try_parse(data: &str) -> Value{
+    pub fn try_parse(data: &str) -> Value {
         let v: Result<Value> = serde_json::from_str(&data);
 
         let res = match v {
             Ok(v) => v,
             Err(e) => {
-                serde_json::from_str( &HTMLError::to_json(HTMLError::new(400, &e.to_string())) ).unwrap()
+                serde_json::from_str(&HTMLError::to_json(HTMLError::new(400, &e.to_string())))
+                    .unwrap()
             }
         };
 
@@ -52,7 +53,7 @@ impl Packet {
             id,
             data: String::from(data),
             room_id,
-            json: Packet::try_parse(data)
+            json: Packet::try_parse(data),
         }
     }
 }

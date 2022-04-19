@@ -1,13 +1,12 @@
-use actix::{fut, ActorContext, WrapFuture, ContextFutureSpawner, ActorFuture};
-use crate::messages::{Disconnect, Connect, WsMessage, Packet};
 use crate::lobby::Lobby;
+use crate::messages::{Connect, Disconnect, Packet, WsMessage};
+use actix::{fut, ActorContext, ActorFuture, ContextFutureSpawner, WrapFuture};
 use actix::{Actor, Addr, Running, StreamHandler};
 use actix::{AsyncContext, Handler};
 use actix_web_actors::ws;
 use actix_web_actors::ws::Message::Text;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -55,44 +54,39 @@ impl Actor for WsConn {
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        self.lobby_addr.do_send(Disconnect { id: self.id, room_id: self.room });
+        self.lobby_addr.do_send(Disconnect {
+            id: self.id,
+            room_id: self.room,
+        });
         Running::Stop
     }
 }
 
 impl WsConn {
-
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
-
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 println!("Disconnecting due to failed heartbeat");
 
-                act.lobby_addr.do_send(Disconnect { id: act.id, room_id: act.room });
+                act.lobby_addr.do_send(Disconnect {
+                    id: act.id,
+                    room_id: act.room,
+                });
                 ctx.stop();
                 return;
-
             }
 
             ctx.ping(b"hi");
-
         });
-
     }
-    
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
-
     fn handle(&mut self, packet: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-
         match packet {
-
             Ok(ws::Message::Ping(packet)) => {
                 self.hb = Instant::now();
                 ctx.pong(&packet);
-
             }
             Ok(ws::Message::Pong(_)) => {
                 self.hb = Instant::now();
@@ -107,17 +101,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
                 ctx.stop();
             }
             Ok(ws::Message::Nop) => (),
-            Ok(Text(s)) => self.lobby_addr.do_send(Packet::new(
-                self.id,
-                &s,
-                self.room
-            )),
+            Ok(Text(s)) => self.lobby_addr.do_send(Packet::new(self.id, &s, self.room)),
             Err(e) => panic!("{}", e),
-
         }
-        
     }
-
 }
 
 impl Handler<WsMessage> for WsConn {
