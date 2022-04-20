@@ -83,6 +83,7 @@ impl Game {
             let _ = socket_recipient
                 .socket
                 .do_send(WsMessage(message.to_owned()));
+            println!("Sent message");
         } else {
             println!("Couldn't find anyone to send message to");
         }
@@ -95,6 +96,20 @@ impl Game {
     pub fn broadcast(&self, data: &str) {
         for id in self.players.keys() {
             self.send_message(data, &id);
+        }
+    }
+
+    pub fn init_player(&mut self, id: &Uuid, username: &str) {
+        let host = self.players.len() == 1;
+        let p: Option<&mut Player> = self.players.get_mut(id);
+
+        match p {
+            Some(p) => {
+                p.username = String::from(username);
+                p.is_connected = true;
+                p.is_host = host;
+            },
+            _ => {}
         }
     }
 
@@ -135,6 +150,20 @@ impl Game {
 
         l
     }
+
+    pub fn get_player(&mut self, room_id: &Uuid, id: &Uuid) -> &Player {
+        self
+            .players
+            .get(id)
+            .unwrap()
+    }
+
+    pub fn get_spectator(&mut self, room_id: &Uuid, id: &Uuid) -> &Player {
+        self
+            .spectators
+            .get(id)
+            .unwrap()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -142,19 +171,26 @@ pub struct Player {
     pub id: Uuid,
     pub socket: Socket,
     pub username: String,
+    pub is_connected: bool,
     pub is_host: bool,
     pub cards: Vec<Card>,
 }
 
 impl Player {
-    pub fn new(id: Uuid, socket: &Socket, is_host: bool, username: &str) -> Player {
+    pub fn new(id: Uuid, socket: &Socket) -> Player {
         Player {
             id,
             socket: socket.to_owned(),
-            username: String::from(username),
-            is_host,
+            username: String::from("connecting..."),
+            is_host: false,
+            is_connected: false,
             cards: Vec::new(),
         }
+    }
+
+    pub fn init(mut self, username: &str, is_host: bool) {
+        self.username = String::from(username);
+        self.is_host = is_host;
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
