@@ -44,14 +44,16 @@ pub struct PublicGamePacket {
     pub r#type: String,
     pub id: Uuid,
     pub cards: usize,
+    pub current: Card,
 }
 
 impl PublicGamePacket {
-    pub fn new(id: Uuid, cards: usize) -> PublicGamePacket {
+    pub fn new(id: Uuid, cards: usize, current: Card) -> PublicGamePacket {
         PublicGamePacket {
             r#type: String::from("STATUS-UPDATE-PUBLIC"),
             id,
             cards,
+            current,
         }
     }
 
@@ -68,13 +70,15 @@ impl PublicGamePacket {
 pub struct PrivateGamePacket {
     pub r#type: String,
     pub cards: Vec<Card>,
+    pub current: Card,
 }
 
 impl PrivateGamePacket {
-    pub fn new(cards: Vec<Card>) -> PrivateGamePacket {
+    pub fn new(cards: Vec<Card>, current: Card) -> PrivateGamePacket {
         PrivateGamePacket {
             r#type: String::from("STATUS-UPDATE-PRIVATE"),
             cards,
+            current,
         }
     }
 
@@ -83,6 +87,64 @@ impl PrivateGamePacket {
     }
 
     pub fn try_parse(data: &str) -> Result<PrivateGamePacket> {
+        serde_json::from_str(data)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AllowedCardsPacket {
+    pub r#type: String,
+    pub cards: Vec<Card>,
+}
+
+impl AllowedCardsPacket {
+    pub fn new(cards: Vec<Card>) -> AllowedCardsPacket {
+        AllowedCardsPacket {
+            r#type: String::from("ALLOWED-CARDS-UPDATE"),
+            cards,
+        }
+    }
+
+    pub fn to_json(data: AllowedCardsPacket) -> String {
+        serde_json::to_string(&data).unwrap()
+    }
+
+    pub fn try_parse(data: &str) -> Result<AllowedCardsPacket> {
+        serde_json::from_str(data)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DrawPacket {
+    pub r#type: String,
+    pub amount: u8,
+}
+
+impl DrawPacket {
+    pub fn try_parse(data: &str) -> Result<DrawPacket> {
+        serde_json::from_str(data)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PlaceCardPacket {
+    pub r#type: String,
+    pub index: usize,
+}
+
+impl PlaceCardPacket {
+    pub fn try_parse(data: &str) -> Result<PlaceCardPacket> {
+        serde_json::from_str(data)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EndTurnPacket {
+    pub r#type: String,
+}
+
+impl EndTurnPacket {
+    pub fn try_parse(data: &str) -> Result<EndTurnPacket> {
         serde_json::from_str(data)
     }
 }

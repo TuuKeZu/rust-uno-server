@@ -5,8 +5,9 @@ use actix::prelude::{Actor, Context, Handler, Recipient};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque, vec_deque};
 use uuid::Uuid;
+
 
 // https://www.unorules.org/wp-content/uploads/2021/03/All-Uno-cards-how-many-cards-in-uno.png
 /*
@@ -41,9 +42,9 @@ pub struct Game {
     pub active: bool,
     pub players: HashMap<Uuid, Player>,
     pub spectators: HashMap<Uuid, Player>,
-    pub current_turn: usize,
+    pub current_turn: Option<Uuid>,
 
-    pub deck: Vec<Card>,
+    pub deck: VecDeque<Card>,
 }
 
 impl Game {
@@ -54,16 +55,8 @@ impl Game {
             players: HashMap::new(),
             spectators: HashMap::new(),
             deck: Card::generate_deck(),
-            current_turn: 0
+            current_turn: None,
         }
-    }
-
-    pub fn join(&mut self, id: Uuid, player: Player) {
-        self.players.insert(id, player);
-    }
-
-    pub fn spectate(&mut self, id: Uuid, player: Player) {
-        self.players.insert(id, player);
     }
 
     pub fn leave(&mut self, id: Uuid) {
@@ -75,6 +68,14 @@ impl Game {
             self.spectators.remove(&id);
         }
     }
+
+    pub fn get_player(&mut self, id: &Uuid) -> &Player {
+        self.players.get(id).unwrap()
+    }
+
+    pub fn get_spectator(&mut self, id: &Uuid) -> &Player {
+        self.spectators.get(id).unwrap()
+    }
 }
 
 impl Game {
@@ -83,7 +84,6 @@ impl Game {
             let _ = socket_recipient
                 .socket
                 .do_send(WsMessage(message.to_owned()));
-            println!("Sent message");
         } else {
             println!("Couldn't find anyone to send message to");
         }
@@ -108,7 +108,7 @@ impl Game {
                 p.username = String::from(username);
                 p.is_connected = true;
                 p.is_host = host;
-            },
+            }
             _ => {}
         }
     }
@@ -117,52 +117,86 @@ impl Game {
         let players: Vec<Uuid> = self.players.keys().cloned().collect::<Vec<Uuid>>();
 
         for id in players {
-            self.players.get_mut(&id).unwrap().cards = self.draw_cards(8);
-
+            self.draw_cards(8, id);
             self.update_card_status(&id);
         }
+
+        self.give_turn();
 
         println!("Started!");
         println!("{:#?}", self.players);
     }
 
+    pub fn give_turn(&mut self) {
+        let current = self.next_turn();
+
+        let mut deck = self.deck.clone();
+        let p = self.get_player(&current);
+
+        let allowed: Vec<Card> = Card::get_allowed_cards(
+            deck.iter().nth(0).unwrap().clone(),
+            p.cards.clone(),
+            current,
+        );
+
+        let packet: AllowedCardsPacket = AllowedCardsPacket::new(allowed);
+        self.send_message(&AllowedCardsPacket::to_json(packet), &current);
+    }
+
     pub fn update_card_status(&self, self_id: &Uuid) {
         for id in self.players.keys() {
             if self_id == id {
-                let p: PrivateGamePacket =
-                    PrivateGamePacket::new(self.players.get(id).unwrap().cards.clone());
+                let p: PrivateGamePacket = PrivateGamePacket::new(
+                    self.players.get(id).unwrap().cards.clone(),
+                    self.deck.iter().nth(0).unwrap().clone(),
+                );
                 self.emit(id, &PrivateGamePacket::to_json(p));
             } else {
-                let p: PublicGamePacket =
-                    PublicGamePacket::new(id.to_owned(), self.players.get(id).unwrap().cards.len());
+                let p: PublicGamePacket = PublicGamePacket::new(
+                    id.to_owned(),
+                    self.players.get(id).unwrap().cards.len(),
+                    self.deck.iter().nth(0).unwrap().clone(),
+                );
                 self.emit(id, &PublicGamePacket::to_json(p));
             }
         }
     }
 
-    pub fn draw_cards(&mut self, count: u8) -> Vec<Card> {
+    pub fn draw_cards(&mut self, count: u8, owner: Uuid) {
         let mut l: Vec<Card> = Vec::new();
+        let p = self.players.get_mut(&owner).unwrap();
 
-        for i in 0..count {
-            l.push(self.deck.pop().unwrap());
-            println!("drawing cards");
+        for _ in 0..count {
+
+            if(self.deck.len() == 0) {
+                self.deck.extend(Card::generate_deck());
+            }
+
+            l.push(self.deck.pop_front().unwrap());
         }
 
-        l
+        l.iter_mut().for_each(|card| card.owner = Some(owner));
+        p.cards.extend(l);
     }
 
-    pub fn get_player(&mut self, room_id: &Uuid, id: &Uuid) -> &Player {
-        self
-            .players
-            .get(id)
-            .unwrap()
+    pub fn next_turn(&mut self) -> Uuid {
+        let id: Option<&Uuid> = self.players.keys().next();
+
+        match id {
+            Some(_) => {
+                self.current_turn = Some(Uuid::from(self.players.keys().next().unwrap().clone()));
+                self.current_turn.unwrap()
+            }
+            _ => {
+                self.current_turn = Some(Uuid::from(self.players.keys().nth(0).unwrap().clone()));
+                self.current_turn.unwrap()
+            }
+        }
     }
 
-    pub fn get_spectator(&mut self, room_id: &Uuid, id: &Uuid) -> &Player {
-        self
-            .spectators
-            .get(id)
-            .unwrap()
+    pub fn place_card(&mut self, card: Card) {
+        self.deck.push_front(card);
+
     }
 }
 
@@ -197,6 +231,7 @@ impl Player {
 pub struct Card {
     pub r#type: String,
     pub color: String,
+    pub owner: Option<Uuid>,
 }
 
 impl Card {
@@ -204,10 +239,11 @@ impl Card {
         Card {
             r#type: String::from(r#type),
             color: String::from(color),
+            owner: None,
         }
     }
 
-    fn generate_deck() -> Vec<Card> {
+    fn generate_deck() -> VecDeque<Card> {
         let mut l: Vec<Card> = Vec::new();
         let types: [&str; 15] = [
             "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "BLOCK", "REVERSE", "DRAW-2",
@@ -222,6 +258,33 @@ impl Card {
             }
         }
         l.shuffle(&mut thread_rng());
+        VecDeque::from(l)
+    }
+
+    fn get_allowed_cards(last_card: Card, deck: Vec<Card>, owner: Uuid) -> Vec<Card> {
+        let mut l: Vec<Card> = Vec::new();
+        let allowed_types: [String; 2] = ["SWICTH".to_string(), "DRAW-4".to_string()];
+
+        for card in deck {
+            // SPECIAL CARDS
+            if allowed_types.contains(&card.r#type) {
+                l.push(card);
+                continue;
+            }
+
+            // SAME COLORED CARDSS
+            if card.color == last_card.color && card.owner != Some(owner) {
+                l.push(card);
+                continue;
+            }
+
+            // SAME NUMBERS
+            if card.r#type == last_card.r#type {
+                l.push(card);
+                continue;
+            }
+        }
+
         l
     }
 }

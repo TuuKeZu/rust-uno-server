@@ -63,18 +63,12 @@ impl Lobby {
     */
 
     pub fn player_exists(&self, room_id: &Uuid, id: &Uuid) -> bool {
-        let p: Option<&Player> = self.rooms
-            .get(room_id)
-            .unwrap()
-            .game
-            .players
-            .get(id);
+        let p: Option<&Player> = self.rooms.get(room_id).unwrap().game.players.get(id);
 
         match p {
             Some(p) => p.is_connected,
-            _ => false
+            _ => false,
         }
-
     }
 }
 
@@ -86,13 +80,13 @@ impl Handler<Disconnect> for Lobby {
     type Result = ();
 
     fn handle(&mut self, packet: Disconnect, _: &mut Context<Self>) {
-        
         if let Some(lobby) = self.rooms.get_mut(&packet.room_id) {
             if lobby.game.players.len() > 1 {
                 lobby.game.leave(packet.id);
 
-                lobby.game.broadcast(&format!("{} disconnected.", packet.id));
-
+                lobby
+                    .game
+                    .broadcast(&format!("{} disconnected.", packet.id));
             } else {
                 self.rooms.remove(&packet.room_id);
             }
@@ -121,13 +115,21 @@ impl Handler<Connect> for Lobby {
         }
 
         if let Some(room) = self.rooms.get_mut(&packet.lobby_id) {
+            room.game.broadcast(&format!(
+                "{} is waiting to join the game...",
+                packet.self_id
+            ));
 
-            room.game.broadcast(&format!("{} is waiting to join the game...", packet.self_id));
-    
             self.sessions.insert(packet.self_id, packet.addr);
-            room.game.players.insert(packet.self_id, Player::new(packet.self_id, self.sessions.get(&packet.self_id).unwrap()));
-    
-            room.game.emit(&packet.self_id, &format!("{} is your own id", packet.self_id));
+            room.game.players.insert(
+                packet.self_id,
+                Player::new(packet.self_id, self.sessions.get(&packet.self_id).unwrap()),
+            );
+
+            room.game.emit(
+                &packet.self_id,
+                &format!("{} is your own id", packet.self_id),
+            );
         }
     }
 }
@@ -137,18 +139,18 @@ impl Handler<Packet> for Lobby {
 
     fn handle(&mut self, packet: Packet, _ctx: &mut Context<Self>) -> Self::Result {
         if let Some(room) = self.rooms.get_mut(&packet.room_id) {
-
             if packet.json.get("type").is_some() {
                 let r#type: String = packet.json.get("type").unwrap().to_string();
-    
+
                 match &r#type as &str {
                     "\"ERROR\"" => {
-                        room.game.emit(&packet.id, &serde_json::to_string(&packet.json).unwrap());
+                        room.game
+                            .emit(&packet.id, &serde_json::to_string(&packet.json).unwrap());
                     }
-    
+
                     "\"REGISTER\"" => {
                         let p: Result<RegisterPacket> = RegisterPacket::try_parse(&packet.data);
-    
+
                         match p {
                             Ok(data) => {
                                 /*
@@ -164,7 +166,8 @@ impl Handler<Packet> for Lobby {
                                 }
                                 */
                                 room.game.init_player(&packet.id, "test");
-                                room.game.broadcast(&format!("{} has joined.", &data.username));
+                                room.game
+                                    .broadcast(&format!("{} has joined.", &data.username));
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -174,7 +177,7 @@ impl Handler<Packet> for Lobby {
                             }
                         }
                     }
-    
+
                     "\"MESSAGE\"" => {
                         let p: Result<MessagePacket> = MessagePacket::try_parse(&packet.data);
                         /*
@@ -201,23 +204,12 @@ impl Handler<Packet> for Lobby {
                             }
                         }
                     }
-    
+
                     "\"START-GAME\"" => {
                         let p: Result<StartPacket> = StartPacket::try_parse(&packet.data);
-                        /*
-                        if !self.player_exists(&packet.room_id, &packet.id) {
-                            room.game.emit(
-                                &packet.id,
-                                &HTMLError::to_json(HTMLError::new(
-                                    401,
-                                    "Only registered players can perform actions.",
-                                )),
-                            );
-                            return;
-                        }
-                        */
-                        let host: bool = room.game.get_player(&packet.room_id, &packet.id).is_host;
-    
+
+                        let host: bool = room.game.get_player(&packet.id).is_host;
+
                         if !host {
                             room.game.emit(
                                 &packet.id,
@@ -228,7 +220,7 @@ impl Handler<Packet> for Lobby {
                             );
                             return;
                         }
-    
+
                         match p {
                             Ok(_) => {
                                 room.game.broadcast("Starting the game, Good luck!");
@@ -242,16 +234,69 @@ impl Handler<Packet> for Lobby {
                             }
                         }
                     }
-    
+
+                    "\"DRAW-CARDS\"" => {
+                        let p: Result<DrawPacket> = DrawPacket::try_parse(&packet.data);
+
+                        match p {
+                            Ok(data) => {
+                                let p = room.game.players.get_mut(&packet.id).unwrap();
+
+                                room.game.draw_cards(data.amount, packet.id);
+                                room.game.update_card_status(&packet.id);
+                            }
+                            Err(e) => {
+                                room.game.emit(
+                                    &packet.id,
+                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
+                                );
+                            }
+                        }
+                    }
+
+                    "\"PLACE-CARD\"" => {
+                        let p: Result<PlaceCardPacket> = PlaceCardPacket::try_parse(&packet.data);
+                        
+                        match p {
+                            Ok(data) => {
+                                
+                                let card = room.game.players.get(&packet.id).unwrap().cards.iter().nth(0);
+
+                                match card {
+                                    Some(card) => {
+                                        room.game.place_card(card.clone());
+                                    }
+                                    _ => {
+                                        room.game.emit(
+                                            &packet.id,
+                                            &HTMLError::to_json(HTMLError::new(400, "Card at index was not found.")),
+                                        );
+                                        return;
+                                    }
+
+                                }
+
+                            }
+                            Err(e) => {
+                                room.game.emit(
+                                    &packet.id,
+                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
+                                );
+                            }
+                        }
+                    }
+
                     &_ => {
                         println!("Unknown type.");
                     }
                 }
             } else {
-                room.game.emit(&packet.id, &HTMLError::to_json(HTMLError::new(400, "Missing request type.")));
+                room.game.emit(
+                    &packet.id,
+                    &HTMLError::to_json(HTMLError::new(400, "Missing request type.")),
+                );
             }
-        }
-        else {
+        } else {
             println!("{:?}", self.rooms);
         }
 
