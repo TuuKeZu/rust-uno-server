@@ -45,6 +45,7 @@ pub struct Game {
     pub current_turn: Option<Uuid>,
 
     pub deck: VecDeque<Card>,
+    pub placed_deck: VecDeque<Card>,
 }
 
 impl Game {
@@ -56,6 +57,7 @@ impl Game {
             spectators: HashMap::new(),
             deck: Card::generate_deck(),
             current_turn: None,
+            placed_deck: VecDeque::new()
         }
     }
 
@@ -71,10 +73,6 @@ impl Game {
 
     pub fn get_player(&mut self, id: &Uuid) -> &Player {
         self.players.get(id).unwrap()
-    }
-
-    pub fn get_spectator(&mut self, id: &Uuid) -> &Player {
-        self.spectators.get(id).unwrap()
     }
 }
 
@@ -114,6 +112,10 @@ impl Game {
     }
 
     pub fn start(&mut self) {
+        let deck = & mut self.deck;
+        self.placed_deck.push_front(Card::get_allowed_start_card(deck));
+        self.active = true;
+
         let players: Vec<Uuid> = self.players.keys().cloned().collect::<Vec<Uuid>>();
 
         for id in players {
@@ -130,17 +132,7 @@ impl Game {
     pub fn give_turn(&mut self) {
         let current = self.next_turn();
 
-        let mut deck = self.deck.clone();
-        let p = self.get_player(&current);
-
-        let allowed: Vec<Card> = Card::get_allowed_cards(
-            deck.iter().nth(0).unwrap().clone(),
-            p.cards.clone(),
-            current,
-        );
-
-        let packet: AllowedCardsPacket = AllowedCardsPacket::new(allowed);
-        self.send_message(&AllowedCardsPacket::to_json(packet), &current);
+        self.update_allowed_status(&current);
     }
 
     pub fn update_card_status(&self, self_id: &Uuid) {
@@ -148,18 +140,32 @@ impl Game {
             if self_id == id {
                 let p: PrivateGamePacket = PrivateGamePacket::new(
                     self.players.get(id).unwrap().cards.clone(),
-                    self.deck.iter().nth(0).unwrap().clone(),
+                    self.placed_deck.iter().nth(0).unwrap().clone(),
                 );
                 self.emit(id, &PrivateGamePacket::to_json(p));
             } else {
                 let p: PublicGamePacket = PublicGamePacket::new(
                     id.to_owned(),
                     self.players.get(id).unwrap().cards.len(),
-                    self.deck.iter().nth(0).unwrap().clone(),
+                    self.placed_deck.iter().nth(0).unwrap().clone(),
                 );
                 self.emit(id, &PublicGamePacket::to_json(p));
             }
         }
+    }
+    
+    pub fn update_allowed_status(&mut self, self_id: &Uuid){
+        let placed_deck = self.placed_deck.clone();
+        let p = self.get_player(self_id);
+
+        let allowed: Vec<Card> = Card::get_allowed_cards(
+            placed_deck.iter().nth(0).unwrap().clone(),
+            p.cards.clone(),
+            self.current_turn.unwrap(),
+        );
+
+        let packet: AllowedCardsPacket = AllowedCardsPacket::new(allowed);
+        self.send_message(&AllowedCardsPacket::to_json(packet), self_id);
     }
 
     pub fn draw_cards(&mut self, count: u8, owner: Uuid) {
@@ -168,7 +174,7 @@ impl Game {
 
         for _ in 0..count {
 
-            if(self.deck.len() == 0) {
+            if self.deck.len() == 0 {
                 self.deck.extend(Card::generate_deck());
             }
 
@@ -194,9 +200,11 @@ impl Game {
         }
     }
 
-    pub fn place_card(&mut self, card: Card) {
-        self.deck.push_front(card);
+    pub fn place_card(&mut self, index: usize, id: Uuid) {
+        let p = self.players.get_mut(&id).unwrap();
 
+        self.placed_deck.push_front(p.cards.iter().nth(index).unwrap().clone());
+        p.cards.remove(index);
     }
 }
 
@@ -220,11 +228,6 @@ impl Player {
             is_connected: false,
             cards: Vec::new(),
         }
-    }
-
-    pub fn init(mut self, username: &str, is_host: bool) {
-        self.username = String::from(username);
-        self.is_host = is_host;
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +262,18 @@ impl Card {
         }
         l.shuffle(&mut thread_rng());
         VecDeque::from(l)
+    }
+
+    fn get_allowed_start_card(deck: &VecDeque<Card>) -> Card {
+        let disallowed_types = vec![
+            "BLOCK".to_string(),
+            "REVERSE".to_string(),
+            "DRAW-2".to_string(),
+            "SWITCH".to_string(),
+            "DRAW-4".to_string()
+        ];
+
+        deck.iter().filter(|card| !disallowed_types.contains(&card.r#type)).collect::<VecDeque<&Card>>().pop_back().unwrap().clone()
     }
 
     fn get_allowed_cards(last_card: Card, deck: Vec<Card>, owner: Uuid) -> Vec<Card> {

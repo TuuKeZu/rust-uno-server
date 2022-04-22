@@ -244,6 +244,7 @@ impl Handler<Packet> for Lobby {
 
                                 room.game.draw_cards(data.amount, packet.id);
                                 room.game.update_card_status(&packet.id);
+                                room.game.update_allowed_status(&packet.id);
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -259,23 +260,35 @@ impl Handler<Packet> for Lobby {
                         
                         match p {
                             Ok(data) => {
-                                
-                                let card = room.game.players.get(&packet.id).unwrap().cards.iter().nth(0);
 
-                                match card {
-                                    Some(card) => {
-                                        room.game.place_card(card.clone());
-                                    }
-                                    _ => {
-                                        room.game.emit(
-                                            &packet.id,
-                                            &HTMLError::to_json(HTMLError::new(400, "Card at index was not found.")),
-                                        );
-                                        return;
-                                    }
-
+                                if data.index > room.game.players.get(&packet.id).unwrap().cards.len() - 1 {
+                                    room.game.emit(
+                                        &packet.id,
+                                        &HTMLError::to_json(HTMLError::new(400, "Card at index was not found.")),
+                                    );
+                                    return;
                                 }
+                                
+                                room.game.place_card(data.index, packet.id);
+                                room.game.update_card_status(&packet.id);
+                                room.game.update_allowed_status(&packet.id);
+                                    
+                            }
+                            Err(e) => {
+                                room.game.emit(
+                                    &packet.id,
+                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
+                                );
+                            }
+                        }
+                    },
 
+                    "\"END-TURN\"" => {
+                        let p: Result<EndTurnPacket> = EndTurnPacket::try_parse(&packet.data);
+
+                        match p {
+                            Ok(_) => {
+                                room.game.give_turn();
                             }
                             Err(e) => {
                                 room.game.emit(
