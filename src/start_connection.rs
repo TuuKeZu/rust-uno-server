@@ -9,9 +9,10 @@ use uuid::Uuid;
 pub async fn start_connection(
     req: HttpRequest,
     stream: Payload,
-    Path(group_id): Path<Uuid>,
+    path: Path<Uuid>,
     srv: Data<Addr<Lobby>>,
 ) -> Result<HttpResponse, Error> {
+    let group_id = path.into_inner();
     let ws = WsConn::new(group_id, srv.get_ref().clone());
 
     let resp = ws::start(ws, &req, stream)?;

@@ -5,6 +5,7 @@ use crate::packets::*;
 use actix::prelude::{Actor, Context, Handler, Recipient};
 use serde_json::Result;
 use std::collections::{HashMap, HashSet};
+use std::thread::current;
 use uuid::Uuid;
 
 type Socket = Recipient<WsMessage>;
@@ -17,16 +18,12 @@ pub struct Lobby {
 
 #[derive(Debug)]
 pub struct Room {
-    connections: HashSet<Uuid>,
     game: Game,
 }
 
 impl Room {
     fn new() -> Room {
-        Room {
-            connections: HashSet::new(),
-            game: Game::new(),
-        }
+        Room { game: Game::new() }
     }
 }
 
@@ -82,11 +79,16 @@ impl Handler<Disconnect> for Lobby {
     fn handle(&mut self, packet: Disconnect, _: &mut Context<Self>) {
         if let Some(lobby) = self.rooms.get_mut(&packet.room_id) {
             if lobby.game.players.len() > 1 {
-                lobby.game.leave(packet.id);
-
                 lobby
                     .game
-                    .broadcast(&format!("{} disconnected.", packet.id));
+                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
+                        &format!(
+                            "{} Disconnected",
+                            lobby.game.players.get(&packet.id).unwrap().username
+                        )[..],
+                    )));
+
+                lobby.game.leave(packet.id);
             } else {
                 self.rooms.remove(&packet.room_id);
             }
@@ -115,11 +117,6 @@ impl Handler<Connect> for Lobby {
         }
 
         if let Some(room) = self.rooms.get_mut(&packet.lobby_id) {
-            room.game.broadcast(&format!(
-                "{} is waiting to join the game...",
-                packet.self_id
-            ));
-
             self.sessions.insert(packet.self_id, packet.addr);
             room.game.players.insert(
                 packet.self_id,
@@ -128,7 +125,9 @@ impl Handler<Connect> for Lobby {
 
             room.game.emit(
                 &packet.self_id,
-                &format!("{} is your own id", packet.self_id),
+                &MessagePacket::to_json(MessagePacket::new(
+                    &format!("{} is your own id", &packet.self_id)[..],
+                )),
             );
         }
     }
@@ -153,8 +152,7 @@ impl Handler<Packet> for Lobby {
 
                         match p {
                             Ok(data) => {
-                                /*
-                                if self.player_exists(&packet.room_id, &packet.id) {
+                                if room.game.get_player(&packet.id).is_connected {
                                     room.game.emit(
                                         &packet.id,
                                         &HTMLError::to_json(HTMLError::new(
@@ -164,10 +162,12 @@ impl Handler<Packet> for Lobby {
                                     );
                                     return;
                                 }
-                                */
-                                room.game.init_player(&packet.id, "test");
+
+                                room.game.init_player(&packet.id, &data.username);
                                 room.game
-                                    .broadcast(&format!("{} has joined.", &data.username));
+                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
+                                        &format!("{} Joined the game.", data.username)[..],
+                                    )));
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -180,21 +180,13 @@ impl Handler<Packet> for Lobby {
 
                     "\"MESSAGE\"" => {
                         let p: Result<MessagePacket> = MessagePacket::try_parse(&packet.data);
-                        /*
-                        if !self.player_exists(&packet.room_id, &packet.id) {
-                            room.game.emit(
-                                &packet.id,
-                                &HTMLError::to_json(HTMLError::new(
-                                    401,
-                                    "Only registered players can perform actions.",
-                                )),
-                            );
-                            return;
-                        }
-                        */
+
                         match p {
                             Ok(data) => {
-                                room.game.broadcast(&data.content);
+                                room.game
+                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
+                                        &format!("{}", data.content)[..],
+                                    )));
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -223,7 +215,10 @@ impl Handler<Packet> for Lobby {
 
                         match p {
                             Ok(_) => {
-                                room.game.broadcast("Starting the game, Good luck!");
+                                room.game
+                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
+                                        "Starting game, good luck!",
+                                    )));
                                 self.rooms.get_mut(&packet.room_id).unwrap().game.start();
                             }
                             Err(e) => {
@@ -257,22 +252,25 @@ impl Handler<Packet> for Lobby {
 
                     "\"PLACE-CARD\"" => {
                         let p: Result<PlaceCardPacket> = PlaceCardPacket::try_parse(&packet.data);
-                        
+
                         match p {
                             Ok(data) => {
-
-                                if data.index > room.game.players.get(&packet.id).unwrap().cards.len() - 1 {
+                                if data.index
+                                    > room.game.players.get(&packet.id).unwrap().cards.len() - 1
+                                {
                                     room.game.emit(
                                         &packet.id,
-                                        &HTMLError::to_json(HTMLError::new(400, "Card at index was not found.")),
+                                        &HTMLError::to_json(HTMLError::new(
+                                            400,
+                                            "Card at index was not found.",
+                                        )),
                                     );
                                     return;
                                 }
-                                
+
                                 room.game.place_card(data.index, packet.id);
                                 room.game.update_card_status(&packet.id);
                                 room.game.update_allowed_status(&packet.id);
-                                    
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -281,7 +279,7 @@ impl Handler<Packet> for Lobby {
                                 );
                             }
                         }
-                    },
+                    }
 
                     "\"END-TURN\"" => {
                         let p: Result<EndTurnPacket> = EndTurnPacket::try_parse(&packet.data);
@@ -299,9 +297,7 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
-                    &_ => {
-                        println!("Unknown type.");
-                    }
+                    &_ => {}
                 }
             } else {
                 room.game.emit(
@@ -312,10 +308,11 @@ impl Handler<Packet> for Lobby {
         } else {
             println!("{:?}", self.rooms);
         }
-
+        /*
         println!(
             "DEBUG: [{}] {} > {:?} ",
             packet.room_id, packet.id, packet.json
         )
+        */
     }
 }

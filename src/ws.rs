@@ -1,5 +1,6 @@
 use crate::lobby::Lobby;
 use crate::messages::{Connect, Disconnect, Packet, WsMessage};
+use actix::ActorFutureExt;
 use actix::{fut, ActorContext, ActorFuture, ContextFutureSpawner, WrapFuture};
 use actix::{Actor, Addr, Running, StreamHandler};
 use actix::{AsyncContext, Handler};

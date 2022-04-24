@@ -5,9 +5,8 @@ use actix::prelude::{Actor, Context, Handler, Recipient};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque, vec_deque};
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
-
 
 // https://www.unorules.org/wp-content/uploads/2021/03/All-Uno-cards-how-many-cards-in-uno.png
 /*
@@ -40,7 +39,7 @@ type Socket = Recipient<WsMessage>;
 pub struct Game {
     pub id: Uuid,
     pub active: bool,
-    pub players: HashMap<Uuid, Player>,
+    pub players: Players,
     pub spectators: HashMap<Uuid, Player>,
     pub current_turn: Option<Uuid>,
 
@@ -48,16 +47,72 @@ pub struct Game {
     pub placed_deck: VecDeque<Card>,
 }
 
+#[derive(Debug, Default)]
+pub struct Players(VecDeque<(Uuid, Player)>);
+
+impl Players {
+    pub fn keys(&self) -> Vec<&Uuid> {
+        self.0.iter().map(|pair| &pair.0).collect::<Vec<&Uuid>>()
+    }
+
+    pub fn keys_mut(&self) -> Vec<Uuid> {
+        self.0.iter().map(|pair| pair.0).collect::<Vec<Uuid>>()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get(&self, key: &Uuid) -> Option<&Player> {
+        let x = self
+            .0
+            .iter()
+            .find(|pair| pair.0 == *key)
+            .map(|pair| &pair.1);
+        x
+    }
+
+    pub fn get_mut(&mut self, key: &Uuid) -> Option<&mut Player> {
+        let x = self
+            .0
+            .iter_mut()
+            .find(|pair| pair.0 == *key)
+            .map(|pair| &mut pair.1);
+        x
+    }
+
+    pub fn contains_key(&self, key: &Uuid) -> bool {
+        self.keys().contains(&key)
+    }
+
+    pub fn remove(&mut self, key: &Uuid) {
+        // l
+        self.0
+            .remove(self.0.iter().position(|pair| pair.0 == *key).unwrap());
+    }
+
+    pub fn insert(&mut self, key: Uuid, player: Player) {
+        self.0.push_back((key, player));
+    }
+
+    pub fn next(&mut self) -> Uuid {
+        //k
+        let current = self.0.pop_back().unwrap();
+        self.0.push_front(current.clone());
+        current.0
+    }
+}
+
 impl Game {
     pub fn new() -> Game {
         Game {
             id: Uuid::new_v4(),
             active: false,
-            players: HashMap::new(),
+            players: Players::default(),
             spectators: HashMap::new(),
             deck: Card::generate_deck(),
             current_turn: None,
-            placed_deck: VecDeque::new()
+            placed_deck: VecDeque::new(),
         }
     }
 
@@ -93,7 +148,7 @@ impl Game {
 
     pub fn broadcast(&self, data: &str) {
         for id in self.players.keys() {
-            self.send_message(data, &id);
+            self.send_message(data, id);
         }
     }
 
@@ -101,24 +156,21 @@ impl Game {
         let host = self.players.len() == 1;
         let p: Option<&mut Player> = self.players.get_mut(id);
 
-        match p {
-            Some(p) => {
-                p.username = String::from(username);
-                p.is_connected = true;
-                p.is_host = host;
-            }
-            _ => {}
+        if let Some(p) = p {
+            p.username = String::from(username);
+            p.is_connected = true;
+            p.is_host = host;
         }
     }
 
     pub fn start(&mut self) {
-        let deck = & mut self.deck;
-        self.placed_deck.push_front(Card::get_allowed_start_card(deck));
+        let deck = &mut self.deck;
+        self.placed_deck
+            .push_front(Card::get_allowed_start_card(deck));
+
         self.active = true;
 
-        let players: Vec<Uuid> = self.players.keys().cloned().collect::<Vec<Uuid>>();
-
-        for id in players {
+        for id in self.players.keys_mut() {
             self.draw_cards(8, id);
             self.update_card_status(&id);
         }
@@ -132,6 +184,12 @@ impl Game {
     pub fn give_turn(&mut self) {
         let current = self.next_turn();
 
+        self.emit(
+            &current,
+            &MessagePacket::to_json(MessagePacket::new(
+                &format!("{} is your own id", current)[..],
+            )),
+        );
         self.update_allowed_status(&current);
     }
 
@@ -153,8 +211,8 @@ impl Game {
             }
         }
     }
-    
-    pub fn update_allowed_status(&mut self, self_id: &Uuid){
+
+    pub fn update_allowed_status(&mut self, self_id: &Uuid) {
         let placed_deck = self.placed_deck.clone();
         let p = self.get_player(self_id);
 
@@ -173,7 +231,6 @@ impl Game {
         let p = self.players.get_mut(&owner).unwrap();
 
         for _ in 0..count {
-
             if self.deck.len() == 0 {
                 self.deck.extend(Card::generate_deck());
             }
@@ -186,24 +243,15 @@ impl Game {
     }
 
     pub fn next_turn(&mut self) -> Uuid {
-        let id: Option<&Uuid> = self.players.keys().next();
-
-        match id {
-            Some(_) => {
-                self.current_turn = Some(Uuid::from(self.players.keys().next().unwrap().clone()));
-                self.current_turn.unwrap()
-            }
-            _ => {
-                self.current_turn = Some(Uuid::from(self.players.keys().nth(0).unwrap().clone()));
-                self.current_turn.unwrap()
-            }
-        }
+        self.current_turn = Some(self.players.next());
+        self.current_turn.unwrap()
     }
 
     pub fn place_card(&mut self, index: usize, id: Uuid) {
         let p = self.players.get_mut(&id).unwrap();
 
-        self.placed_deck.push_front(p.cards.iter().nth(index).unwrap().clone());
+        self.placed_deck
+            .push_front(p.cards.iter().nth(index).unwrap().clone());
         p.cards.remove(index);
     }
 }
@@ -232,32 +280,80 @@ impl Player {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Card {
-    pub r#type: String,
-    pub color: String,
+    pub r#type: Type,
+    pub color: Color,
     pub owner: Option<Uuid>,
 }
 
+#[derive(strum_macros::Display, Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum Color {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+}
+
+impl Color {
+    pub fn iter() -> Vec<Color> {
+        vec![Color::Red, Color::Blue, Color::Green, Color::Yellow]
+    }
+}
+
+#[derive(strum_macros::Display, Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum Type {
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Block,
+    Reverse,
+    DrawTwo,
+    Switch,
+    DrawFour,
+}
+
+impl Type {
+    pub fn iter() -> Vec<Type> {
+        vec![
+            Type::One,
+            Type::Two,
+            Type::Three,
+            Type::Four,
+            Type::Five,
+            Type::Six,
+            Type::Seven,
+            Type::Eight,
+            Type::Nine,
+            Type::Block,
+            Type::Reverse,
+            Type::DrawFour,
+            Type::Switch,
+            Type::DrawFour,
+        ]
+    }
+}
+
 impl Card {
-    fn new(r#type: &str, color: &str) -> Card {
+    fn new(r#type: Type, color: Color) -> Card {
         Card {
-            r#type: String::from(r#type),
-            color: String::from(color),
+            r#type,
+            color,
             owner: None,
         }
     }
 
     fn generate_deck() -> VecDeque<Card> {
         let mut l: Vec<Card> = Vec::new();
-        let types: [&str; 15] = [
-            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "BLOCK", "REVERSE", "DRAW-2",
-            "SWICTH", "DRAW-4",
-        ];
-        let colors: [&str; 4] = ["RED", "YELLOW", "BLUE", "GREEN"];
 
-        for c in colors {
-            for t in types {
-                l.push(Card::new(t, c));
-                l.push(Card::new(t, c));
+        for c in &Color::iter() {
+            for t in &Type::iter() {
+                l.push(Card::new(t.clone(), c.clone()));
+                l.push(Card::new(t.clone(), c.clone()));
             }
         }
         l.shuffle(&mut thread_rng());
@@ -266,23 +362,28 @@ impl Card {
 
     fn get_allowed_start_card(deck: &VecDeque<Card>) -> Card {
         let disallowed_types = vec![
-            "BLOCK".to_string(),
-            "REVERSE".to_string(),
-            "DRAW-2".to_string(),
-            "SWITCH".to_string(),
-            "DRAW-4".to_string()
+            Type::Block,
+            Type::Switch,
+            Type::DrawFour,
+            Type::Reverse,
+            Type::DrawTwo,
         ];
 
-        deck.iter().filter(|card| !disallowed_types.contains(&card.r#type)).collect::<VecDeque<&Card>>().pop_back().unwrap().clone()
+        deck.iter()
+            .filter(|card| !disallowed_types.contains(&card.r#type))
+            .collect::<VecDeque<&Card>>()
+            .pop_back()
+            .unwrap()
+            .clone()
     }
 
     fn get_allowed_cards(last_card: Card, deck: Vec<Card>, owner: Uuid) -> Vec<Card> {
-        let mut l: Vec<Card> = Vec::new();
-        let allowed_types: [String; 2] = ["SWICTH".to_string(), "DRAW-4".to_string()];
+        let mut l = Vec::new();
+        let special = [Type::Switch, Type::DrawFour];
 
         for card in deck {
             // SPECIAL CARDS
-            if allowed_types.contains(&card.r#type) {
+            if special.contains(&card.r#type) {
                 l.push(card);
                 continue;
             }

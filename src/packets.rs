@@ -22,8 +22,18 @@ pub struct MessagePacket {
 }
 
 impl MessagePacket {
+    pub fn new(content: &str) -> MessagePacket {
+        MessagePacket {
+            r#type: String::from("MESSAGE"),
+            content: String::from(content),
+        }
+    }
     pub fn try_parse(data: &str) -> Result<MessagePacket> {
         serde_json::from_str(data)
+    }
+
+    pub fn to_json(data: MessagePacket) -> String {
+        serde_json::to_string(&data).unwrap()
     }
 }
 
