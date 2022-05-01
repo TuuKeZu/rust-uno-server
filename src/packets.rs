@@ -1,4 +1,5 @@
 use crate::game::Card;
+use colored::Color;
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
 use uuid::Uuid;
@@ -53,15 +54,17 @@ impl StartPacket {
 pub struct PublicGamePacket {
     pub r#type: String,
     pub id: Uuid,
+    pub username: String,
     pub cards: usize,
     pub current: Card,
 }
 
 impl PublicGamePacket {
-    pub fn new(id: Uuid, cards: usize, current: Card) -> PublicGamePacket {
+    pub fn new(id: Uuid, username: &str, cards: usize, current: Card) -> PublicGamePacket {
         PublicGamePacket {
             r#type: String::from("STATUS-UPDATE-PUBLIC"),
             id,
+            username: String::from(username),
             cards,
             current,
         }
@@ -127,7 +130,7 @@ impl AllowedCardsPacket {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DrawPacket {
     pub r#type: String,
-    pub amount: u8,
+    pub amount: usize,
 }
 
 impl DrawPacket {
@@ -156,5 +159,27 @@ pub struct EndTurnPacket {
 impl EndTurnPacket {
     pub fn try_parse(data: &str) -> Result<EndTurnPacket> {
         serde_json::from_str(data)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ColorSwitchPacket {
+    pub r#type: String,
+    pub color: crate::game::Color,
+}
+
+impl ColorSwitchPacket {
+    pub fn new(color: crate::game::Color) -> ColorSwitchPacket {
+        ColorSwitchPacket {
+            r#type: String::from("COLOR-SWITCH"),
+            color,
+        }
+    }
+    pub fn try_parse(data: &str) -> Result<ColorSwitchPacket> {
+        serde_json::from_str(data)
+    }
+
+    pub fn to_json(data: ColorSwitchPacket) -> String {
+        serde_json::to_string(&data).unwrap()
     }
 }

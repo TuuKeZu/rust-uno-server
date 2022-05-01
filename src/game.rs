@@ -9,29 +9,6 @@ use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 // https://www.unorules.org/wp-content/uploads/2021/03/All-Uno-cards-how-many-cards-in-uno.png
-/*
-CARD-TYPES
-0 - 0
-1 - 1
-2 - 2
-3 - 3
-4 - 4
-5 - 5
-6 - 6
-7 - 7
-8 - 8
-9 - 9
-10 - block
-11 - reverse
-12 - +2
-13 - switch color
-14 - +4
-COLOR-TYPES
-0 - red
-1 - yellow
-2 - blue
-3 - green
-*/
 
 type Socket = Recipient<WsMessage>;
 
@@ -45,6 +22,8 @@ pub struct Game {
 
     pub deck: VecDeque<Card>,
     pub placed_deck: VecDeque<Card>,
+
+    pub draw_stack: usize,
 }
 
 #[derive(Debug, Default)]
@@ -95,8 +74,7 @@ impl Players {
         self.0.push_back((key, player));
     }
 
-    pub fn next(&mut self) -> Uuid {
-        //k
+    pub fn next_player(&mut self) -> Uuid {
         let current = self.0.pop_back().unwrap();
         self.0.push_front(current.clone());
         current.0
@@ -113,6 +91,7 @@ impl Game {
             deck: Card::generate_deck(),
             current_turn: None,
             placed_deck: VecDeque::new(),
+            draw_stack: 0,
         }
     }
 
@@ -161,6 +140,13 @@ impl Game {
             p.is_connected = true;
             p.is_host = host;
         }
+
+        if host {
+            self.emit(
+                id,
+                &MessagePacket::to_json(MessagePacket::new("You are the host")),
+            )
+        }
     }
 
     pub fn start(&mut self) {
@@ -178,7 +164,6 @@ impl Game {
         self.give_turn();
 
         println!("Started!");
-        println!("{:#?}", self.players);
     }
 
     pub fn give_turn(&mut self) {
@@ -186,11 +171,35 @@ impl Game {
 
         self.emit(
             &current,
-            &MessagePacket::to_json(MessagePacket::new(
-                &format!("{} is your own id", current)[..],
-            )),
+            &MessagePacket::to_json(MessagePacket::new("Your turn.")),
         );
+
         self.update_allowed_status(&current);
+    }
+
+    pub fn end_turn(&mut self) {
+        let draw_cards = [Type::DrawTwo, Type::DrawFour];
+        let last_card = self.placed_deck.get(0).unwrap();
+
+        if last_card.owner != self.current_turn && draw_cards.contains(&last_card.r#type) {
+            let mut count = if last_card.r#type == Type::DrawFour {
+                4
+            } else {
+                2
+            };
+
+            if self.draw_stack >= count {
+                count = self.draw_stack;
+            }
+
+            self.draw_cards(count, self.current_turn.unwrap());
+            self.placed_deck.get_mut(0).unwrap().owner = None;
+        } else {
+            self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
+        }
+
+        self.update_card_status(&self.current_turn.unwrap());
+        self.give_turn();
     }
 
     pub fn update_card_status(&self, self_id: &Uuid) {
@@ -198,14 +207,15 @@ impl Game {
             if self_id == id {
                 let p: PrivateGamePacket = PrivateGamePacket::new(
                     self.players.get(id).unwrap().cards.clone(),
-                    self.placed_deck.iter().nth(0).unwrap().clone(),
+                    self.placed_deck.get(0).unwrap().clone(),
                 );
                 self.emit(id, &PrivateGamePacket::to_json(p));
             } else {
                 let p: PublicGamePacket = PublicGamePacket::new(
-                    id.to_owned(),
-                    self.players.get(id).unwrap().cards.len(),
-                    self.placed_deck.iter().nth(0).unwrap().clone(),
+                    self_id.to_owned(),
+                    &self.players.get(self_id).unwrap().username,
+                    self.players.get(self_id).unwrap().cards.len(),
+                    self.placed_deck.get(0).unwrap().clone(),
                 );
                 self.emit(id, &PublicGamePacket::to_json(p));
             }
@@ -213,11 +223,14 @@ impl Game {
     }
 
     pub fn update_allowed_status(&mut self, self_id: &Uuid) {
+        println!("Updating allowed status");
+
         let placed_deck = self.placed_deck.clone();
+
         let p = self.get_player(self_id);
 
         let allowed: Vec<Card> = Card::get_allowed_cards(
-            placed_deck.iter().nth(0).unwrap().clone(),
+            placed_deck.get(0).unwrap().clone(),
             p.cards.clone(),
             self.current_turn.unwrap(),
         );
@@ -226,33 +239,74 @@ impl Game {
         self.send_message(&AllowedCardsPacket::to_json(packet), self_id);
     }
 
-    pub fn draw_cards(&mut self, count: u8, owner: Uuid) {
+    pub fn draw_cards(&mut self, count: usize, owner: Uuid) {
         let mut l: Vec<Card> = Vec::new();
         let p = self.players.get_mut(&owner).unwrap();
 
         for _ in 0..count {
-            if self.deck.len() == 0 {
+            if self.deck.is_empty() {
                 self.deck.extend(Card::generate_deck());
             }
 
             l.push(self.deck.pop_front().unwrap());
         }
+        l.push(Card::new(Type::DrawFour, Color::Red));
 
         l.iter_mut().for_each(|card| card.owner = Some(owner));
         p.cards.extend(l);
     }
 
     pub fn next_turn(&mut self) -> Uuid {
-        self.current_turn = Some(self.players.next());
+        self.current_turn = Some(self.players.next_player());
         self.current_turn.unwrap()
     }
 
     pub fn place_card(&mut self, index: usize, id: Uuid) {
+        let draw_cards = [Type::DrawTwo, Type::DrawFour];
         let p = self.players.get_mut(&id).unwrap();
 
+        // Stacked draw-cards
+        if self.placed_deck.get(0).unwrap().r#type == p.cards.get(index).unwrap().r#type
+            && draw_cards.contains(&self.placed_deck.get(0).unwrap().r#type)
+        {
+            let count = if self.placed_deck.get(0).unwrap().r#type == Type::DrawFour {
+                4
+            } else {
+                2
+            };
+            if self.draw_stack == 0 {
+                self.draw_stack += count * 2;
+            } else {
+                self.draw_stack += count;
+            }
+        } else {
+            self.draw_stack = 0;
+        }
+
+        println!("Draw-stack is now the size of {}", self.draw_stack);
+
         self.placed_deck
-            .push_front(p.cards.iter().nth(index).unwrap().clone());
+            .push_front(p.cards.get(index).unwrap().clone());
         p.cards.remove(index);
+    }
+
+    pub fn switch_color(&mut self, color: Color) {
+        let allowed_types = vec![Type::DrawFour, Type::Switch];
+
+        if allowed_types.contains(&self.placed_deck.get(0).unwrap().r#type) {
+            println!("{:#?}", &color);
+            let c = self.placed_deck.get(0).unwrap().clone();
+
+            self.broadcast(&MessagePacket::to_json(MessagePacket::new(&format!(
+                "Switched color to {}",
+                color
+            ))));
+
+            self.placed_deck
+                .insert(0, Card::new_with_owner(c.r#type, color, c.owner));
+
+            println!("{:#?}", self.placed_deck.get(0));
+        }
     }
 }
 
@@ -301,6 +355,7 @@ impl Color {
 
 #[derive(strum_macros::Display, Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum Type {
+    Zero,
     One,
     Two,
     Three,
@@ -320,6 +375,7 @@ pub enum Type {
 impl Type {
     pub fn iter() -> Vec<Type> {
         vec![
+            Type::Zero,
             Type::One,
             Type::Two,
             Type::Three,
@@ -331,7 +387,7 @@ impl Type {
             Type::Nine,
             Type::Block,
             Type::Reverse,
-            Type::DrawFour,
+            Type::DrawTwo,
             Type::Switch,
             Type::DrawFour,
         ]
@@ -344,6 +400,14 @@ impl Card {
             r#type,
             color,
             owner: None,
+        }
+    }
+
+    fn new_with_owner(r#type: Type, color: Color, owner: Option<Uuid>) -> Card {
+        Card {
+            r#type,
+            color,
+            owner,
         }
     }
 
@@ -380,24 +444,42 @@ impl Card {
     fn get_allowed_cards(last_card: Card, deck: Vec<Card>, owner: Uuid) -> Vec<Card> {
         let mut l = Vec::new();
         let special = [Type::Switch, Type::DrawFour];
+        let draw_cards = [Type::DrawTwo, Type::DrawFour];
 
         for card in deck {
-            // SPECIAL CARDS
-            if special.contains(&card.r#type) {
-                l.push(card);
-                continue;
-            }
+            if last_card.owner == Some(owner) && last_card.owner.is_some() {
+                // SAME TYPES
+                if card.r#type == last_card.r#type {
+                    l.push(card);
+                    continue;
+                }
+            } else {
+                // LAST CARD WAS A DRAW CARD PLACED BY ANOTHER "PLAYER"
+                if draw_cards.contains(&last_card.r#type) && last_card.owner.is_some() {
+                    // SPECIAL CARDS
+                    if last_card.r#type == card.r#type {
+                        l.push(card);
+                        continue;
+                    }
+                } else {
+                    // SPECIAL CARDS
+                    if special.contains(&card.r#type) {
+                        l.push(card);
+                        continue;
+                    }
 
-            // SAME COLORED CARDSS
-            if card.color == last_card.color && card.owner != Some(owner) {
-                l.push(card);
-                continue;
-            }
+                    // SAME COLORED CARDS
+                    if card.color == last_card.color {
+                        l.push(card);
+                        continue;
+                    }
 
-            // SAME NUMBERS
-            if card.r#type == last_card.r#type {
-                l.push(card);
-                continue;
+                    // SAME TYPES
+                    if card.r#type == last_card.r#type {
+                        l.push(card);
+                        continue;
+                    }
+                }
             }
         }
 

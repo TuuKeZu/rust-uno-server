@@ -12,7 +12,6 @@ type Socket = Recipient<WsMessage>;
 
 #[derive(Debug)]
 pub struct Lobby {
-    sessions: HashMap<Uuid, Socket>,
     rooms: HashMap<Uuid, Room>,
 }
 
@@ -30,41 +29,7 @@ impl Room {
 impl Default for Lobby {
     fn default() -> Lobby {
         Lobby {
-            sessions: HashMap::new(),
             rooms: HashMap::new(),
-        }
-    }
-}
-
-impl Lobby {
-    fn send_message(&self, message: &str, room_id: &Uuid, id_to: &Uuid) {
-        if let Some(player) = self.rooms.get(room_id).unwrap().game.players.get(id_to) {
-            let t = player.socket.do_send(WsMessage(message.to_owned()));
-        } else {
-            println!("Couldn't find anyone to send message to");
-        }
-    }
-    /*
-    pub fn emit(&self, packet: &Packet, data: &str) {
-        self.send_message(data, &packet.room_id, &packet.id);
-    }
-
-    pub fn broadcast(&self, packet: &Packet, data: &str) {
-        self.rooms
-            .get(&packet.room_id)
-            .unwrap()
-            .connections
-            .iter()
-            .for_each(|client| self.send_message(data, &packet.room_id, client))
-    }
-    */
-
-    pub fn player_exists(&self, room_id: &Uuid, id: &Uuid) -> bool {
-        let p: Option<&Player> = self.rooms.get(room_id).unwrap().game.players.get(id);
-
-        match p {
-            Some(p) => p.is_connected,
-            _ => false,
         }
     }
 }
@@ -79,32 +44,21 @@ impl Handler<Disconnect> for Lobby {
     fn handle(&mut self, packet: Disconnect, _: &mut Context<Self>) {
         if let Some(lobby) = self.rooms.get_mut(&packet.room_id) {
             if lobby.game.players.len() > 1 {
-                lobby
-                    .game
-                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                        &format!(
-                            "{} Disconnected",
-                            lobby.game.players.get(&packet.id).unwrap().username
-                        )[..],
-                    )));
+                let disconnected = lobby.game.players.get(&packet.id);
 
-                lobby.game.leave(packet.id);
+                if let Some(player) = disconnected {
+                    lobby
+                        .game
+                        .broadcast(&MessagePacket::to_json(MessagePacket::new(
+                            &format!("{} Disconnected", player.username)[..],
+                        )));
+
+                    lobby.game.leave(packet.id);
+                }
             } else {
                 self.rooms.remove(&packet.room_id);
             }
         }
-
-        /*
-        self.rooms
-            .get(&packet.room_id)
-            .unwrap()
-            .connections
-            .iter()
-            .filter(|conn_id| *conn_id.to_owned() != packet.id)
-            .for_each(|user_id| {
-                self.send_message(&format!("{} disconnected.", packet.id), user_id)
-            });
-        */
     }
 }
 
@@ -112,16 +66,27 @@ impl Handler<Connect> for Lobby {
     type Result = ();
 
     fn handle(&mut self, packet: Connect, _: &mut Context<Self>) -> Self::Result {
-        if !self.rooms.contains_key(&packet.lobby_id) {
-            self.rooms.insert(packet.lobby_id, Room::new());
-        }
+        // A very sexy one-liner
+        self.rooms.entry(packet.lobby_id).or_insert_with(Room::new);
 
         if let Some(room) = self.rooms.get_mut(&packet.lobby_id) {
-            self.sessions.insert(packet.self_id, packet.addr);
-            room.game.players.insert(
-                packet.self_id,
-                Player::new(packet.self_id, self.sessions.get(&packet.self_id).unwrap()),
-            );
+            if room.game.active {
+                // TODO allow spectators. Currently they are sent an HTMLError
+
+                let _ = &packet
+                    .addr
+                    .do_send(WsMessage(HTMLError::to_json(HTMLError::new(
+                        401,
+                        "Cannot join active game.",
+                    ))));
+                return;
+            }
+
+            println!("Connection is waiting to join...");
+
+            room.game
+                .players
+                .insert(packet.self_id, Player::new(packet.self_id, &packet.addr));
 
             room.game.emit(
                 &packet.self_id,
@@ -138,15 +103,24 @@ impl Handler<Packet> for Lobby {
 
     fn handle(&mut self, packet: Packet, _ctx: &mut Context<Self>) -> Self::Result {
         if let Some(room) = self.rooms.get_mut(&packet.room_id) {
+            // Ignore all the request sent by non-players
+            if !room.game.players.contains_key(&packet.id) {
+                return;
+            }
+
+            // Confirm that the packet has a type
             if packet.json.get("type").is_some() {
+                // Resolve the packet's type
                 let r#type: String = packet.json.get("type").unwrap().to_string();
 
+                // Huge match-tree
                 match &r#type as &str {
                     "\"ERROR\"" => {
                         room.game
                             .emit(&packet.id, &serde_json::to_string(&packet.json).unwrap());
                     }
 
+                    // Register-event
                     "\"REGISTER\"" => {
                         let p: Result<RegisterPacket> = RegisterPacket::try_parse(&packet.data);
 
@@ -178,6 +152,7 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
+                    // Message-event
                     "\"MESSAGE\"" => {
                         let p: Result<MessagePacket> = MessagePacket::try_parse(&packet.data);
 
@@ -197,6 +172,7 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
+                    // Start-event
                     "\"START-GAME\"" => {
                         let p: Result<StartPacket> = StartPacket::try_parse(&packet.data);
 
@@ -230,8 +206,17 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
+                    // Draw-event
                     "\"DRAW-CARDS\"" => {
                         let p: Result<DrawPacket> = DrawPacket::try_parse(&packet.data);
+
+                        // Disallow request unless the player has the turn
+                        if room.game.current_turn.unwrap_or_default() != packet.id {
+                            room.game.emit(
+                                &packet.id,
+                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                            );
+                        }
 
                         match p {
                             Ok(data) => {
@@ -250,8 +235,17 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
+                    // Place-event
                     "\"PLACE-CARD\"" => {
                         let p: Result<PlaceCardPacket> = PlaceCardPacket::try_parse(&packet.data);
+
+                        // Disallow request unless the player has the turn
+                        if room.game.current_turn.unwrap_or_default() != packet.id {
+                            room.game.emit(
+                                &packet.id,
+                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                            );
+                        }
 
                         match p {
                             Ok(data) => {
@@ -281,12 +275,47 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
+                    // Called in the end of each turn
                     "\"END-TURN\"" => {
                         let p: Result<EndTurnPacket> = EndTurnPacket::try_parse(&packet.data);
 
+                        // Disallow request unless the player has the turn
+                        if room.game.current_turn.unwrap_or_default() != packet.id {
+                            room.game.emit(
+                                &packet.id,
+                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                            );
+                        }
+
                         match p {
                             Ok(_) => {
-                                room.game.give_turn();
+                                room.game.end_turn();
+                            }
+                            Err(e) => {
+                                room.game.emit(
+                                    &packet.id,
+                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
+                                );
+                            }
+                        }
+                    }
+                    "\"COLOR-SWITCH\"" => {
+                        let p: Result<ColorSwitchPacket> =
+                            ColorSwitchPacket::try_parse(&packet.data);
+
+                        // Disallow request unless the player has the turn
+                        if room.game.current_turn.unwrap_or_default() != packet.id {
+                            room.game.emit(
+                                &packet.id,
+                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                            );
+                        }
+
+                        match p {
+                            Ok(data) => {
+                                room.game.switch_color(data.color);
+                                room.game.update_card_status(&packet.id);
+                                room.game.update_allowed_status(&packet.id);
                             }
                             Err(e) => {
                                 room.game.emit(
@@ -308,11 +337,10 @@ impl Handler<Packet> for Lobby {
         } else {
             println!("{:?}", self.rooms);
         }
-        /*
+
         println!(
             "DEBUG: [{}] {} > {:?} ",
             packet.room_id, packet.id, packet.json
         )
-        */
     }
 }

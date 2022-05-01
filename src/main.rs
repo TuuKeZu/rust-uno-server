@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
             .service(start_connection_route)
             .data(chat_server.clone())
     })
-    .bind("127.0.0.1:8080")?
+    .bind("127.0.0.1:8090")?
     .run()
     .await
 }

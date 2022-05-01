@@ -59,15 +59,13 @@ fn log_message(data: Option<Result<Message, Error>>) -> Option<Response> {
             if r#type.is_null() {
                 return None;
             };
-
-            /* DEBUGGING
+            /*
             if result["type"] == "ERROR" {
                 println!("{}", format!("{:#?}", result).red());
             } else {
                 println!("{}", format!("{:#?}", result).yellow());
             }
             */
-
             Some(Response::new(r#type.as_str().unwrap().to_string()))
         }
         Err(e) => {
@@ -119,7 +117,7 @@ mod tests {
 
             let (mut p_write_2, mut p_read_2) = player_2.split();
 
-            // Send Request
+            // Send Request - Register
             p_write_1
                 .send(Message::Text(
                     r#"{"type": "REGISTER", "username": "test_1" }"#.to_string(),
@@ -127,7 +125,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            // Send Request
+            // Send Request - Register
             p_write_2
                 .send(Message::Text(
                     r#"{"type": "REGISTER", "username": "test_2"}"#.to_string(),
@@ -135,28 +133,23 @@ mod tests {
                 .await
                 .unwrap();
 
+            // Send Request - Register a second time
             p_write_2
                 .send(Message::Text(
                     r#"{"type": "REGISTER", "username": "test_2"}"#.to_string(),
+                ))
+                .await
+                .unwrap();
+
+            // Send Request - Start the game without permission
+            p_write_2
+                .send(Message::Text(
+                    r#"{"type": "START-GAME","options": "None"}"#.to_string(),
                 ))
                 .await
                 .unwrap();
 
             let mut responses: Vec<Response> = Vec::new();
-
-            // Read player 1's responses
-            while let Some(message) = p_read_1.next().now_or_never() {
-                if let Some(r) = log_message(message) {
-                    responses.push(r);
-                }
-            }
-
-            responses.clear();
-
-            assert!(
-                !responses.iter().any(|res| res.r#type == "ERROR"),
-                "Error was emitted when trying to register an account."
-            );
 
             // Read player 2's responses
             while let Some(message) = p_read_2.next().now_or_never() {
@@ -167,7 +160,46 @@ mod tests {
 
             assert!(
                 responses.iter().any(|res| res.r#type == "ERROR"),
-                "Two instances were created withour emiting an error."
+                "Two instances were created withour emiting an error and (or) game was started without permission"
+            );
+
+            // reset responses
+            responses.clear();
+
+            // Send Request - Start game with permissio
+            p_write_1
+                .send(Message::Text(
+                    r#"{"type": "START-GAME","options": "None"}"#.to_string(),
+                ))
+                .await
+                .unwrap();
+
+            // Read player 1's responses
+            while let Some(message) = p_read_1.next().now_or_never() {
+                if let Some(r) = log_message(message) {
+                    responses.push(r);
+                }
+            }
+
+            // dbg!(&responses);
+
+            assert!(
+                !responses.iter().any(|res| res.r#type == "ERROR"),
+                "Error was emitted when trying to start the game"
+            );
+
+            assert!(
+                !responses
+                    .iter()
+                    .any(|res| res.r#type == "STATUS-UPDATE-PRIVATE"),
+                "Failed to receive your initial cards"
+            );
+
+            assert!(
+                !responses
+                    .iter()
+                    .any(|res| res.r#type == "STATUS-UPDATE-PRIVATE"),
+                "Failed to receive the public cards"
             );
         });
 
