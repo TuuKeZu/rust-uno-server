@@ -220,8 +220,6 @@ impl Handler<Packet> for Lobby {
 
                         match p {
                             Ok(data) => {
-                                let p = room.game.players.get_mut(&packet.id).unwrap();
-
                                 room.game.draw_cards(data.amount, packet.id);
                                 room.game.update_card_status(&packet.id);
                                 room.game.update_allowed_status(&packet.id);

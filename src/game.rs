@@ -24,6 +24,8 @@ pub struct Game {
     pub placed_deck: VecDeque<Card>,
 
     pub draw_stack: usize,
+    pub block_stack: usize,
+    pub reversed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -40,6 +42,10 @@ impl Players {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn get(&self, key: &Uuid) -> Option<&Player> {
@@ -79,6 +85,12 @@ impl Players {
         self.0.push_front(current.clone());
         current.0
     }
+
+    pub fn prev_player(&mut self) -> Uuid {
+        let current = self.0.pop_front().unwrap();
+        self.0.push_back(current.clone());
+        current.0
+    }
 }
 
 impl Game {
@@ -92,6 +104,8 @@ impl Game {
             current_turn: None,
             placed_deck: VecDeque::new(),
             draw_stack: 0,
+            block_stack: 0,
+            reversed: false,
         }
     }
 
@@ -181,6 +195,7 @@ impl Game {
         let draw_cards = [Type::DrawTwo, Type::DrawFour];
         let last_card = self.placed_deck.get(0).unwrap();
 
+        // Drawing cards
         if last_card.owner != self.current_turn && draw_cards.contains(&last_card.r#type) {
             let mut count = if last_card.r#type == Type::DrawFour {
                 4
@@ -198,7 +213,51 @@ impl Game {
             self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
         }
 
+        // Reversing
+        if self.placed_deck.get(0).unwrap().r#type == Type::Reverse {
+            self.reversed = !self.reversed;
+
+            self.broadcast(&MessagePacket::to_json(MessagePacket::new(&format!(
+                "The order was reversed {}",
+                if self.reversed {
+                    "from <= to =>"
+                } else {
+                    "from => to <="
+                }
+            ))));
+
+            // Only give the turn back to the player if there's less than 3 players
+            if self.players.len() > 2 {
+                if self.reversed {
+                    self.players.prev_player();
+                } else {
+                    self.players.next_player();
+                }
+            } else {
+                self.placed_deck.get_mut(0).unwrap().owner = None;
+            }
+        }
         self.update_card_status(&self.current_turn.unwrap());
+
+        // Blocking
+        if self.placed_deck.get(0).unwrap().r#type == Type::Block {
+            let count = if self.block_stack > 1 {
+                self.block_stack
+            } else {
+                1
+            };
+
+            for _ in 0..count {
+                if self.reversed {
+                    self.players.prev_player();
+                } else {
+                    self.players.next_player();
+                }
+                println!("skipped a turn");
+            }
+            self.block_stack = 0;
+        }
+
         self.give_turn();
     }
 
@@ -250,20 +309,25 @@ impl Game {
 
             l.push(self.deck.pop_front().unwrap());
         }
-        l.push(Card::new(Type::DrawFour, Color::Red));
+        l.push(Card::new(Type::Block, Color::Red));
 
         l.iter_mut().for_each(|card| card.owner = Some(owner));
         p.cards.extend(l);
     }
 
     pub fn next_turn(&mut self) -> Uuid {
-        self.current_turn = Some(self.players.next_player());
+        // Handle reversed
+        self.current_turn = if self.reversed {
+            Some(self.players.prev_player())
+        } else {
+            Some(self.players.next_player())
+        };
         self.current_turn.unwrap()
     }
 
     pub fn place_card(&mut self, index: usize, id: Uuid) {
         let draw_cards = [Type::DrawTwo, Type::DrawFour];
-        let p = self.players.get_mut(&id).unwrap();
+        let p = self.players.get(&id).unwrap();
 
         // Stacked draw-cards
         if self.placed_deck.get(0).unwrap().r#type == p.cards.get(index).unwrap().r#type
@@ -274,16 +338,28 @@ impl Game {
             } else {
                 2
             };
-            if self.draw_stack == 0 {
-                self.draw_stack += count * 2;
+            self.draw_stack += if self.draw_stack == 0 {
+                count * 2
             } else {
-                self.draw_stack += count;
+                count
             }
         } else {
             self.draw_stack = 0;
         }
 
-        println!("Draw-stack is now the size of {}", self.draw_stack);
+        // Stacked block-cards
+        if self.placed_deck.get(0).unwrap().r#type == p.cards.get(index).unwrap().r#type
+            && self.placed_deck.get(0).unwrap().r#type == Type::Block
+            && p.cards.get(index).unwrap().owner == self.placed_deck.get(0).unwrap().owner
+        {
+            self.block_stack += if self.block_stack == 0 { 2 } else { 1 };
+        } else {
+            self.block_stack = 0;
+        }
+        println!("block stack is now the size of {}", self.block_stack);
+
+        //Shadowing player now when we need it mutable
+        let p = self.players.get_mut(&id).unwrap();
 
         self.placed_deck
             .push_front(p.cards.get(index).unwrap().clone());
