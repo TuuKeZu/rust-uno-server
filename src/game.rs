@@ -195,6 +195,26 @@ impl Game {
         let draw_cards = [Type::DrawTwo, Type::DrawFour];
         let last_card = self.placed_deck.get(0).unwrap();
 
+        println!(
+            "Actions: {:#?}",
+            self.players
+                .get(&self.current_turn.unwrap())
+                .unwrap()
+                .actions
+        );
+
+        // Check if the player can end their turn => allow in the case of the last card having been a draw-card
+        if !(self
+            .players
+            .get(&self.current_turn.unwrap())
+            .unwrap()
+            .can_end()
+            || draw_cards.contains(&last_card.r#type) && draw_cards.contains(&last_card.r#type))
+        {
+            println!("cannot end their turn yet.");
+            return;
+        }
+
         // Drawing cards
         if last_card.owner != self.current_turn && draw_cards.contains(&last_card.r#type) {
             let mut count = if last_card.r#type == Type::DrawFour {
@@ -210,7 +230,7 @@ impl Game {
             self.draw_cards(count, self.current_turn.unwrap());
             self.placed_deck.get_mut(0).unwrap().owner = None;
         } else {
-            self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
+            self.placed_deck.get_mut(0).unwrap().owner = None;
         }
 
         // Reversing
@@ -237,7 +257,6 @@ impl Game {
                 self.placed_deck.get_mut(0).unwrap().owner = None;
             }
         }
-        self.update_card_status(&self.current_turn.unwrap());
 
         // Blocking
         if self.placed_deck.get(0).unwrap().r#type == Type::Block {
@@ -255,9 +274,25 @@ impl Game {
                 }
                 println!("skipped a turn");
             }
+            // Reset block-stack and allow the same player to place cards by deowning the block-card.
+            self.placed_deck.get_mut(0).unwrap().owner = None;
             self.block_stack = 0;
         }
 
+        // Clear all the actions done by the player during this turn
+        self.players
+            .get_mut(&self.current_turn.unwrap())
+            .unwrap()
+            .actions
+            .clear();
+
+        // Send back the 'EndTurnPacket' to client to indicate their turn has ended
+        self.emit(
+            &self.current_turn.unwrap(),
+            &EndTurnPacket::to_json(EndTurnPacket::new()),
+        );
+
+        self.update_card_status(&self.current_turn.unwrap());
         self.give_turn();
     }
 
@@ -313,6 +348,9 @@ impl Game {
 
         l.iter_mut().for_each(|card| card.owner = Some(owner));
         p.cards.extend(l);
+
+        // Puch the action to the actions list
+        p.actions.push(Actions::DrawCard);
     }
 
     pub fn next_turn(&mut self) -> Uuid {
@@ -361,6 +399,9 @@ impl Game {
         //Shadowing player now when we need it mutable
         let p = self.players.get_mut(&id).unwrap();
 
+        // Puch the action to the actions list
+        p.actions.push(Actions::PlaceCard);
+
         self.placed_deck
             .push_front(p.cards.get(index).unwrap().clone());
         p.cards.remove(index);
@@ -394,6 +435,8 @@ pub struct Player {
     pub is_connected: bool,
     pub is_host: bool,
     pub cards: Vec<Card>,
+    pub waiting: bool,
+    actions: Vec<Actions>,
 }
 
 impl Player {
@@ -405,9 +448,33 @@ impl Player {
             is_host: false,
             is_connected: false,
             cards: Vec::new(),
+            waiting: false,
+            actions: Vec::new(),
         }
     }
+
+    pub fn can_end(&self) -> bool {
+        // Player can end their turn only if they have placed one card or drawn 3 cards
+        self.actions
+            .iter()
+            .filter(|a| **a == Actions::PlaceCard)
+            .count()
+            >= 1
+            || self
+                .actions
+                .iter()
+                .filter(|a| **a == Actions::DrawCard)
+                .count()
+                >= 3
+    }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Actions {
+    DrawCard,
+    PlaceCard,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Card {
     pub r#type: Type,

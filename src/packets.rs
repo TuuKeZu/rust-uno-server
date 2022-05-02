@@ -157,6 +157,16 @@ pub struct EndTurnPacket {
 }
 
 impl EndTurnPacket {
+    pub fn new() -> EndTurnPacket {
+        EndTurnPacket {
+            r#type: "END-TURN".to_string(),
+        }
+    }
+
+    pub fn to_json(data: EndTurnPacket) -> String {
+        serde_json::to_string(&data).unwrap()
+    }
+
     pub fn try_parse(data: &str) -> Result<EndTurnPacket> {
         serde_json::from_str(data)
     }

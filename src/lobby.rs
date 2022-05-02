@@ -189,6 +189,17 @@ impl Handler<Packet> for Lobby {
                             return;
                         }
 
+                        if room.game.players.len() < 2 {
+                            room.game.emit(
+                                &packet.id,
+                                &HTMLError::to_json(HTMLError::new(
+                                    401,
+                                    "The game required at least 2 players to start.",
+                                )),
+                            );
+                            return;
+                        }
+
                         match p {
                             Ok(_) => {
                                 room.game
