@@ -60,7 +60,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .service(start_connection_route)
-            .app_data(chat_server.clone())
+            .data(chat_server.clone())
     })
     .bind(config.listen_addr)?
     .run()
