@@ -1,7 +1,6 @@
-use crate::lobby::*;
 use crate::messages::WsMessage;
 use crate::packets::*;
-use actix::prelude::{Actor, Context, Handler, Recipient};
+use actix::prelude::Recipient;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
@@ -122,9 +121,7 @@ impl Game {
     pub fn get_player(&mut self, id: &Uuid) -> &Player {
         self.players.get(id).unwrap()
     }
-}
 
-impl Game {
     fn send_message(&self, message: &str, id: &Uuid) {
         if let Some(socket_recipient) = self.players.get(id) {
             let _ = socket_recipient
@@ -424,6 +421,12 @@ impl Game {
 
             println!("{:#?}", self.placed_deck.get(0));
         }
+    }
+}
+
+impl Default for Game {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

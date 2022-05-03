@@ -1,16 +1,13 @@
 use crate::errors::HTMLError;
-use crate::game::{Card, Game, Player};
+use crate::game::{Game, Player};
 use crate::messages::{Connect, Disconnect, Packet, WsMessage};
 use crate::packets::*;
-use actix::prelude::{Actor, Context, Handler, Recipient};
+use actix::prelude::{Actor, Context, Handler};
 use serde_json::Result;
-use std::collections::{HashMap, HashSet};
-use std::thread::current;
+use std::collections::HashMap;
 use uuid::Uuid;
 
-type Socket = Recipient<WsMessage>;
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Lobby {
     rooms: HashMap<Uuid, Room>,
 }
@@ -23,14 +20,6 @@ pub struct Room {
 impl Room {
     fn new() -> Room {
         Room { game: Game::new() }
-    }
-}
-
-impl Default for Lobby {
-    fn default() -> Lobby {
-        Lobby {
-            rooms: HashMap::new(),
-        }
     }
 }
 
@@ -160,7 +149,7 @@ impl Handler<Packet> for Lobby {
                             Ok(data) => {
                                 room.game
                                     .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                                        &format!("{}", data.content)[..],
+                                        data.content.as_str(),
                                     )));
                             }
                             Err(e) => {

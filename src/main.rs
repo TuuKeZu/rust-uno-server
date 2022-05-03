@@ -14,7 +14,6 @@ use clap::{Arg, Command};
 use serde_derive::Deserialize;
 use start_connection::start_connection as start_connection_route;
 use std::fs;
-use toml;
 
 #[derive(Deserialize)]
 struct Config {
@@ -60,7 +59,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .service(start_connection_route)
-            .data(chat_server.clone())
+            .app_data(chat_server.clone())
     })
     .bind(config.listen_addr)?
     .run()

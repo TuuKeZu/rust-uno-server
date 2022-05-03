@@ -35,17 +35,15 @@ pub struct Packet {
 
 impl Packet {
     pub fn try_parse(data: &str) -> Value {
-        let v: Result<Value> = serde_json::from_str(&data);
+        let v: Result<Value> = serde_json::from_str(data);
 
-        let res = match v {
+        match v {
             Ok(v) => v,
             Err(e) => {
                 serde_json::from_str(&HTMLError::to_json(HTMLError::new(400, &e.to_string())))
                     .unwrap()
             }
-        };
-
-        res
+        }
     }
 
     pub fn new(id: Uuid, data: &str, room_id: Uuid) -> Packet {

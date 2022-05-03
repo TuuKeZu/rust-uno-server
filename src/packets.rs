@@ -1,5 +1,4 @@
 use crate::game::Card;
-use colored::Color;
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
 use uuid::Uuid;
@@ -169,6 +168,12 @@ impl EndTurnPacket {
 
     pub fn try_parse(data: &str) -> Result<EndTurnPacket> {
         serde_json::from_str(data)
+    }
+}
+
+impl Default for EndTurnPacket {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
