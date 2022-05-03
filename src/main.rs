@@ -14,6 +14,7 @@ use clap::{Arg, Command};
 use serde_derive::Deserialize;
 use start_connection::start_connection as start_connection_route;
 use std::fs;
+use colored::Colorize;
 
 #[derive(Deserialize)]
 struct Config {
@@ -54,7 +55,7 @@ async fn main() -> std::io::Result<()> {
 
     let chat_server = Lobby::default().start();
 
-    println!("Server Started at {}", config.listen_addr);
+    println!("{} {}" ,"Server Started at".green(), config.listen_addr.to_string().green().bold());
 
     HttpServer::new(move || {
         App::new()
