@@ -172,7 +172,7 @@ impl Handler<Packet> for Lobby {
                                 &packet.id,
                                 &HTMLError::to_json(HTMLError::new(
                                     401,
-                                    "Only host can start the game.",
+                                    "Only the host can start the game.",
                                 )),
                             );
                             return;
@@ -214,7 +214,7 @@ impl Handler<Packet> for Lobby {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
                             );
                         }
 
@@ -241,7 +241,7 @@ impl Handler<Packet> for Lobby {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
                             );
                         }
 
@@ -281,7 +281,7 @@ impl Handler<Packet> for Lobby {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
                             );
                         }
 
@@ -305,7 +305,7 @@ impl Handler<Packet> for Lobby {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not yout turn.")),
+                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
                             );
                         }
 
