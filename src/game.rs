@@ -192,28 +192,23 @@ impl Game {
         let draw_cards = [Type::DrawTwo, Type::DrawFour];
         let last_card = self.placed_deck.get(0).unwrap();
 
-        println!(
-            "Actions: {:#?}",
-            self.players
-                .get(&self.current_turn.unwrap())
-                .unwrap()
-                .actions
-        );
-
-        // Check if the player can end their turn => allow in the case of the last card having been a draw-card
+        // Check if the player can end their turn => allow in the case of the last card was a draw-card
         if !(self
             .players
             .get(&self.current_turn.unwrap())
             .unwrap()
             .can_end()
-            || draw_cards.contains(&last_card.r#type) && draw_cards.contains(&last_card.r#type))
+            || draw_cards.contains(&last_card.r#type) && last_card.owner.is_some())
         {
             println!("cannot end their turn yet.");
             return;
         }
 
         // Drawing cards
-        if last_card.owner != self.current_turn && draw_cards.contains(&last_card.r#type) {
+        if last_card.owner != self.current_turn
+            && last_card.owner.is_some()
+            && draw_cards.contains(&last_card.r#type)
+        {
             let mut count = if last_card.r#type == Type::DrawFour {
                 4
             } else {
@@ -227,7 +222,7 @@ impl Game {
             self.draw_cards(count, self.current_turn.unwrap());
             self.placed_deck.get_mut(0).unwrap().owner = None;
         } else {
-            self.placed_deck.get_mut(0).unwrap().owner = None;
+            self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
         }
 
         // Reversing
@@ -341,7 +336,6 @@ impl Game {
 
             l.push(self.deck.pop_front().unwrap());
         }
-        l.push(Card::new(Type::Block, Color::Red));
 
         l.iter_mut().for_each(|card| card.owner = Some(owner));
         p.cards.extend(l);
