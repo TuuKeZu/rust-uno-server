@@ -38,8 +38,9 @@ impl Handler<Disconnect> for Lobby {
                 if let Some(player) = disconnected {
                     lobby
                         .game
-                        .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                            &format!("{} Disconnected", player.username)[..],
+                        .broadcast(&DisconnectPacket::to_json(DisconnectPacket::new(
+                            packet.id,
+                            &player.username,
                         )));
 
                     lobby.game.leave(packet.id);
@@ -60,7 +61,7 @@ impl Handler<Connect> for Lobby {
 
         if let Some(room) = self.rooms.get_mut(&packet.lobby_id) {
             if room.game.active {
-                // TODO allow spectators. Currently they are sent an HTMLError
+                // TODO allow spectators. Currently they are sent an HTMLError when trying to join
 
                 let _ = &packet
                     .addr
@@ -128,8 +129,9 @@ impl Handler<Packet> for Lobby {
 
                                 room.game.init_player(&packet.id, &data.username);
                                 room.game
-                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                                        &format!("{} Joined the game.", data.username)[..],
+                                    .broadcast(&ConnectPacket::to_json(ConnectPacket::new(
+                                        packet.id,
+                                        &data.username,
                                     )));
                             }
                             Err(e) => {

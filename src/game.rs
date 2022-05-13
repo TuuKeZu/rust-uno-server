@@ -79,16 +79,29 @@ impl Players {
         self.0.push_back((key, player));
     }
 
-    pub fn next_player(&mut self) -> Uuid {
-        let current = self.0.pop_back().unwrap();
-        self.0.push_front(current.clone());
-        current.0
+    pub fn next_player(&mut self, reversed: bool) -> Uuid {
+        if !reversed {
+            let current = self.0.pop_back().unwrap();
+            self.0.push_front(current.clone());
+            current.0
+        } else {
+            let current = self.0.pop_front().unwrap();
+            self.0.push_back(current.clone());
+            current.0
+        }
     }
 
-    pub fn prev_player(&mut self) -> Uuid {
-        let current = self.0.pop_front().unwrap();
-        self.0.push_back(current.clone());
-        current.0
+    pub fn get_next(&self, reversed: bool) -> Uuid {
+        let mut players = self.0.clone();
+        if !reversed {
+            let current = players.pop_back().unwrap();
+            players.push_front(current.clone());
+            current.0
+        } else {
+            let current = players.pop_front().unwrap();
+            players.push_back(current.clone());
+            current.0
+        }
     }
 }
 
@@ -185,6 +198,11 @@ impl Game {
             &MessagePacket::to_json(MessagePacket::new("Your turn.")),
         );
 
+        self.broadcast(&TurnUpdatePacket::to_json(TurnUpdatePacket::new(
+            current,
+            self.players.get_next(self.reversed),
+        )));
+
         self.update_allowed_status(&current);
     }
 
@@ -240,11 +258,7 @@ impl Game {
 
             // Only give the turn back to the player if there's less than 3 players
             if self.players.len() > 2 {
-                if self.reversed {
-                    self.players.prev_player();
-                } else {
-                    self.players.next_player();
-                }
+                self.players.next_player(self.reversed);
             } else {
                 self.placed_deck.get_mut(0).unwrap().owner = None;
             }
@@ -259,11 +273,7 @@ impl Game {
             };
 
             for _ in 0..count {
-                if self.reversed {
-                    self.players.prev_player();
-                } else {
-                    self.players.next_player();
-                }
+                self.players.next_player(self.reversed);
                 println!("skipped a turn");
             }
             // Reset block-stack and allow the same player to place cards by deowning the block-card.
@@ -345,12 +355,7 @@ impl Game {
     }
 
     pub fn next_turn(&mut self) -> Uuid {
-        // Handle reversed
-        self.current_turn = if self.reversed {
-            Some(self.players.prev_player())
-        } else {
-            Some(self.players.next_player())
-        };
+        self.current_turn = Some(self.players.next_player(self.reversed));
         self.current_turn.unwrap()
     }
 
@@ -594,8 +599,28 @@ impl Card {
                     continue;
                 }
             } else {
+                if last_card.owner.is_none() {
+                    // SPECIAL CARDS
+                    if special.contains(&card.r#type) {
+                        l.push(card);
+                        continue;
+                    }
+
+                    // SAME COLORED CARDS
+                    if card.color == last_card.color {
+                        l.push(card);
+                        continue;
+                    }
+
+                    // SAME TYPES
+                    if card.r#type == last_card.r#type {
+                        l.push(card);
+                        continue;
+                    }
+                }
+
                 // LAST CARD WAS A DRAW CARD PLACED BY ANOTHER "PLAYER"
-                if draw_cards.contains(&last_card.r#type) && last_card.owner.is_some() {
+                if draw_cards.contains(&last_card.r#type) && last_card.owner != Some(owner) {
                     // SPECIAL CARDS
                     if last_card.r#type == card.r#type {
                         l.push(card);
