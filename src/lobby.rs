@@ -1,4 +1,3 @@
-use crate::errors::HTMLError;
 use crate::game::{Game, Player};
 use crate::messages::{Connect, Disconnect, Packet, WsMessage};
 use crate::packets::*;
@@ -36,12 +35,10 @@ impl Handler<Disconnect> for Lobby {
                 let disconnected = lobby.game.players.get(&packet.id);
 
                 if let Some(player) = disconnected {
-                    lobby
-                        .game
-                        .broadcast(&DisconnectPacket::to_json(DisconnectPacket::new(
-                            packet.id,
-                            &player.username,
-                        )));
+                    lobby.game.broadcast(&to_json(PacketType::Disconnect(
+                        packet.id,
+                        player.username.clone(),
+                    )));
 
                     lobby.game.leave(packet.id);
                 }
@@ -63,12 +60,10 @@ impl Handler<Connect> for Lobby {
             if room.game.active {
                 // TODO allow spectators. Currently they are sent an HTMLError when trying to join
 
-                let _ = &packet
-                    .addr
-                    .do_send(WsMessage(HTMLError::to_json(HTMLError::new(
-                        401,
-                        "Cannot join active game.",
-                    ))));
+                let _ = &packet.addr.do_send(WsMessage(to_json(PacketType::Error(
+                    401,
+                    "Game you are trying to join has already started".to_string(),
+                ))));
                 return;
             }
 
@@ -80,9 +75,10 @@ impl Handler<Connect> for Lobby {
 
             room.game.emit(
                 &packet.self_id,
-                &MessagePacket::to_json(MessagePacket::new(
-                    &format!("{} is your own id", &packet.self_id)[..],
-                )),
+                &to_json(PacketType::Message(format!(
+                    "{} is your own id",
+                    &packet.self_id
+                ))),
             );
         }
     }
@@ -97,84 +93,55 @@ impl Handler<Packet> for Lobby {
             if !room.game.players.contains_key(&packet.id) {
                 return;
             }
+            let data: Result<PacketType> = serde_json::from_str(&packet.data);
 
-            // Confirm that the packet has a type
-            if packet.json.get("type").is_some() {
-                // Resolve the packet's type
-                let r#type: String = packet.json.get("type").unwrap().to_string();
-
-                // Huge match-tree
-                match &r#type as &str {
-                    "\"ERROR\"" => {
-                        room.game
-                            .emit(&packet.id, &serde_json::to_string(&packet.json).unwrap());
-                    }
-
-                    // Register-event
-                    "\"REGISTER\"" => {
-                        let p: Result<RegisterPacket> = RegisterPacket::try_parse(&packet.data);
-
-                        match p {
-                            Ok(data) => {
-                                if room.game.get_player(&packet.id).is_connected {
-                                    room.game.emit(
-                                        &packet.id,
-                                        &HTMLError::to_json(HTMLError::new(
-                                            401,
-                                            "Instance already exists.",
-                                        )),
-                                    );
-                                    return;
-                                }
-
-                                room.game.init_player(&packet.id, &data.username);
-                                room.game
-                                    .broadcast(&ConnectPacket::to_json(ConnectPacket::new(
-                                        packet.id,
-                                        &data.username,
-                                    )));
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(401, &e.to_string())),
-                                );
-                            }
+            if let Ok(packet_data) = data {
+                match packet_data {
+                    PacketType::Register(username) => {
+                        if room.game.get_player(&packet.id).is_connected {
+                            room.game.emit(
+                                &packet.id,
+                                &to_json(PacketType::Error(
+                                    401,
+                                    "Instance already exists".to_string(),
+                                )),
+                            );
+                            return;
                         }
+                        // Initialize the player
+                        room.game.init_player(&packet.id, &username);
+
+                        // Broadcast the join-event
+                        room.game.broadcast_ignore_self(
+                            packet.id,
+                            &to_json(PacketType::Connect(packet.id, username.clone())),
+                        );
+
+                        // Emit the current game-data to the player
+                        room.game.emit(
+                            &packet.id,
+                            &to_json(PacketType::GameData(
+                                packet.id,
+                                username,
+                                room.game.players.map(),
+                            )),
+                        )
                     }
-
-                    // Message-event
-                    "\"MESSAGE\"" => {
-                        let p: Result<MessagePacket> = MessagePacket::try_parse(&packet.data);
-
-                        match p {
-                            Ok(data) => {
-                                room.game
-                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                                        data.content.as_str(),
-                                    )));
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
+                    PacketType::GameData(_, _, _) => {} // Will only be sent to client
+                    PacketType::Connect(_, _) => {}     // Will only be sent to client
+                    PacketType::Disconnect(_, _) => {}  // Will only be sent to client
+                    PacketType::Message(content) => {
+                        room.game.broadcast(&to_json(PacketType::Message(content)));
                     }
-
-                    // Start-event
-                    "\"START-GAME\"" => {
-                        let p: Result<StartPacket> = StartPacket::try_parse(&packet.data);
-
+                    PacketType::StartGame(_options) => {
                         let host: bool = room.game.get_player(&packet.id).is_host;
 
                         if !host {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(
+                                &to_json(PacketType::Error(
                                     401,
-                                    "Only the host can start the game.",
+                                    "You cannot start the game".to_string(),
                                 )),
                             );
                             return;
@@ -183,122 +150,83 @@ impl Handler<Packet> for Lobby {
                         if room.game.players.len() < 2 {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(
+                                &to_json(PacketType::Error(
                                     401,
-                                    "The game required at least 2 players to start.",
+                                    "Cannot start the game alone".to_string(),
                                 )),
                             );
                             return;
                         }
 
-                        match p {
-                            Ok(_) => {
-                                room.game
-                                    .broadcast(&MessagePacket::to_json(MessagePacket::new(
-                                        "Starting game, good luck!",
-                                    )));
-                                self.rooms.get_mut(&packet.room_id).unwrap().game.start();
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
+                        self.rooms.get_mut(&packet.room_id).unwrap().game.start();
                     }
-
-                    // Draw-event
-                    "\"DRAW-CARDS\"" => {
-                        let p: Result<DrawPacket> = DrawPacket::try_parse(&packet.data);
-
-                        // Disallow request unless the player has the turn
+                    PacketType::StatusUpdatePublic(_, _, _, _) => {} // Will only be sent to client
+                    PacketType::StatusUpdatePrivate(_, _) => {}      // Will only be sent to client
+                    PacketType::AllowedCardsUpdate(_) => {}          // Will only be sent to client
+                    PacketType::DrawCard(amount) => {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
+                                &to_json(PacketType::Error(401, "It's not your turn".to_string())),
                             );
+                            return;
                         }
 
-                        match p {
-                            Ok(data) => {
-                                room.game.draw_cards(data.amount, packet.id);
-                                room.game.update_card_status(&packet.id);
-                                room.game.update_allowed_status(&packet.id);
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
+                        room.game.draw_cards(amount.into(), packet.id);
+                        room.game.update_card_status(&packet.id);
+                        room.game.update_allowed_status(&packet.id);
                     }
-
-                    // Place-event
-                    "\"PLACE-CARD\"" => {
-                        let p: Result<PlaceCardPacket> = PlaceCardPacket::try_parse(&packet.data);
-
-                        // Disallow request unless the player has the turn
+                    PacketType::PlaceCard(index) => {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
+                                &to_json(PacketType::Error(401, "It's not your turn".to_string())),
                             );
+                            return;
                         }
 
-                        match p {
-                            Ok(data) => {
-                                if data.index
-                                    > room.game.players.get(&packet.id).unwrap().cards.len() - 1
-                                {
-                                    room.game.emit(
-                                        &packet.id,
-                                        &HTMLError::to_json(HTMLError::new(
-                                            400,
-                                            "Card at index was not found.",
-                                        )),
-                                    );
-                                    return;
-                                }
-
-                                room.game.place_card(data.index, packet.id);
-                                room.game.update_card_status(&packet.id);
-                                room.game.update_allowed_status(&packet.id);
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
+                        room.game.place_card(index, packet.id);
+                        room.game.update_card_status(&packet.id);
+                        room.game.update_allowed_status(&packet.id);
                     }
-
-                    // Called in the end of each turn
-                    "\"END-TURN\"" => {
-                        let p: Result<EndTurnPacket> = EndTurnPacket::try_parse(&packet.data);
-
-                        // Disallow request unless the player has the turn
+                    PacketType::EndTurn => {
                         if room.game.current_turn.unwrap_or_default() != packet.id {
                             room.game.emit(
                                 &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
+                                &to_json(PacketType::Error(401, "It's not your turn".to_string())),
                             );
+                            return;
                         }
 
-                        match p {
-                            Ok(_) => {
-                                room.game.end_turn();
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
+                        room.game.end_turn(packet.id);
                     }
+                    PacketType::ColorSwitch(color) => {
+                        if room.game.current_turn.unwrap_or_default() != packet.id {
+                            room.game.emit(
+                                &packet.id,
+                                &to_json(PacketType::Error(401, "It's not your turn".to_string())),
+                            );
+                            return;
+                        }
+
+                        room.game.switch_color(color);
+                        room.game.update_card_status(&packet.id);
+                        room.game.update_allowed_status(&packet.id);
+                    }
+                    PacketType::TurnUpdate(_, _) => {} // Will only be sent to client
+                    PacketType::Error(_, _) => {}      // Will only be sent to client
+                }
+            }
+
+            /*
+            // Confirm that the packet has a type
+            if packet.json.get("type").is_some() {
+                // Resolve the packet's type
+                let r#type: String = packet.json.get("type").unwrap().to_string();
+                println!("{:#?}", packet.data);
+                let d: Result<PacketType> = serde_json::from_str(&packet.data);
+                println!("{:#?}", d);
+                match &r#type as &str {
                     "\"COLOR-SWITCH\"" => {
                         let p: Result<ColorSwitchPacket> =
                             ColorSwitchPacket::try_parse(&packet.data);
@@ -326,14 +254,16 @@ impl Handler<Packet> for Lobby {
                         }
                     }
 
-                    &_ => {}
+                    &_ => {
+                        println!("Unknown type")
+                    }
                 }
             } else {
                 room.game.emit(
                     &packet.id,
                     &HTMLError::to_json(HTMLError::new(400, "Missing request type.")),
                 );
-            }
+            }*/
         } else {
             println!("{:?}", self.rooms);
         }
@@ -343,4 +273,8 @@ impl Handler<Packet> for Lobby {
             packet.room_id, packet.id, packet.json
         )
     }
+}
+
+pub fn to_json(data: PacketType) -> String {
+    serde_json::to_string(&data).unwrap()
 }

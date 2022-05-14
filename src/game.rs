@@ -47,6 +47,13 @@ impl Players {
         self.len() == 0
     }
 
+    pub fn map(&self) -> Vec<(Uuid, String)> {
+        self.0
+            .iter()
+            .map(|(k, p)| (*k, p.username.clone()))
+            .collect()
+    }
+
     pub fn get(&self, key: &Uuid) -> Option<&Player> {
         let x = self
             .0
@@ -91,7 +98,7 @@ impl Players {
         }
     }
 
-    pub fn get_next(&self, reversed: bool) -> Uuid {
+    pub fn predict_next(&self, reversed: bool) -> Uuid {
         let mut players = self.0.clone();
         if !reversed {
             let current = players.pop_back().unwrap();
@@ -155,6 +162,14 @@ impl Game {
         }
     }
 
+    pub fn broadcast_ignore_self(&self, self_id: Uuid, data: &str) {
+        for id in self.players.keys() {
+            if &self_id != id {
+                self.send_message(data, id);
+            }
+        }
+    }
+
     pub fn init_player(&mut self, id: &Uuid, username: &str) {
         let host = self.players.len() == 1;
         let p: Option<&mut Player> = self.players.get_mut(id);
@@ -168,7 +183,7 @@ impl Game {
         if host {
             self.emit(
                 id,
-                &MessagePacket::to_json(MessagePacket::new("You are the host")),
+                &to_json(PacketType::Message("You are the host".to_string())),
             )
         }
     }
@@ -195,18 +210,18 @@ impl Game {
 
         self.emit(
             &current,
-            &MessagePacket::to_json(MessagePacket::new("Your turn.")),
+            &to_json(PacketType::Message("Your turn".to_string())),
         );
 
-        self.broadcast(&TurnUpdatePacket::to_json(TurnUpdatePacket::new(
+        self.broadcast(&to_json(PacketType::TurnUpdate(
             current,
-            self.players.get_next(self.reversed),
+            self.players.predict_next(self.reversed),
         )));
 
         self.update_allowed_status(&current);
     }
 
-    pub fn end_turn(&mut self) {
+    pub fn end_turn(&mut self, id: Uuid) {
         let draw_cards = [Type::DrawTwo, Type::DrawFour];
         let last_card = self.placed_deck.get(0).unwrap();
 
@@ -218,6 +233,14 @@ impl Game {
             .can_end()
             || draw_cards.contains(&last_card.r#type) && last_card.owner.is_some())
         {
+            self.emit(
+                &id,
+                &to_json(PacketType::Error(
+                    401,
+                    "Cannot end your turn yet. Please either place a card or draw three cards"
+                        .to_string(),
+                )),
+            );
             println!("cannot end their turn yet.");
             return;
         }
@@ -246,15 +269,6 @@ impl Game {
         // Reversing
         if self.placed_deck.get(0).unwrap().r#type == Type::Reverse {
             self.reversed = !self.reversed;
-
-            self.broadcast(&MessagePacket::to_json(MessagePacket::new(&format!(
-                "The order was reversed {}",
-                if self.reversed {
-                    "from <= to =>"
-                } else {
-                    "from => to <="
-                }
-            ))));
 
             // Only give the turn back to the player if there's less than 3 players
             if self.players.len() > 2 {
@@ -289,10 +303,7 @@ impl Game {
             .clear();
 
         // Send back the 'EndTurnPacket' to client to indicate their turn has ended
-        self.emit(
-            &self.current_turn.unwrap(),
-            &EndTurnPacket::to_json(EndTurnPacket::new()),
-        );
+        self.emit(&self.current_turn.unwrap(), &to_json(PacketType::EndTurn));
 
         self.update_card_status(&self.current_turn.unwrap());
         self.give_turn();
@@ -301,19 +312,37 @@ impl Game {
     pub fn update_card_status(&self, self_id: &Uuid) {
         for id in self.players.keys() {
             if self_id == id {
+                /*
                 let p: PrivateGamePacket = PrivateGamePacket::new(
                     self.players.get(id).unwrap().cards.clone(),
                     self.placed_deck.get(0).unwrap().clone(),
                 );
-                self.emit(id, &PrivateGamePacket::to_json(p));
+                */
+                self.emit(
+                    id,
+                    &to_json(PacketType::StatusUpdatePrivate(
+                        self.players.get(id).unwrap().cards.clone(),
+                        self.placed_deck.get(0).unwrap().clone(),
+                    )),
+                );
             } else {
+                /*
                 let p: PublicGamePacket = PublicGamePacket::new(
                     self_id.to_owned(),
                     &self.players.get(self_id).unwrap().username,
                     self.players.get(self_id).unwrap().cards.len(),
                     self.placed_deck.get(0).unwrap().clone(),
                 );
-                self.emit(id, &PublicGamePacket::to_json(p));
+                */
+                self.emit(
+                    id,
+                    &to_json(PacketType::StatusUpdatePublic(
+                        self_id.to_owned(),
+                        self.players.get(self_id).unwrap().username.clone(),
+                        self.players.get(self_id).unwrap().cards.len(),
+                        self.placed_deck.get(0).unwrap().clone(),
+                    )),
+                );
             }
         }
     }
@@ -331,8 +360,7 @@ impl Game {
             self.current_turn.unwrap(),
         );
 
-        let packet: AllowedCardsPacket = AllowedCardsPacket::new(allowed);
-        self.send_message(&AllowedCardsPacket::to_json(packet), self_id);
+        self.send_message(&to_json(PacketType::AllowedCardsUpdate(allowed)), self_id);
     }
 
     pub fn draw_cards(&mut self, count: usize, owner: Uuid) {
@@ -410,7 +438,7 @@ impl Game {
             println!("{:#?}", &color);
             let c = self.placed_deck.get(0).unwrap().clone();
 
-            self.broadcast(&MessagePacket::to_json(MessagePacket::new(&format!(
+            self.broadcast(&to_json(PacketType::Message(format!(
                 "Switched color to {}",
                 color
             ))));
@@ -650,4 +678,8 @@ impl Card {
 
         l
     }
+}
+
+pub fn to_json(data: PacketType) -> String {
+    serde_json::to_string(&data).unwrap()
 }
