@@ -241,7 +241,6 @@ impl Game {
                         .to_string(),
                 )),
             );
-            println!("cannot end their turn yet.");
             return;
         }
 
@@ -262,7 +261,9 @@ impl Game {
 
             self.draw_cards(count, self.current_turn.unwrap());
             self.placed_deck.get_mut(0).unwrap().owner = None;
-        } else {
+        }
+
+        if self.placed_deck.get(0).unwrap().owner.is_some() {
             self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
         }
 
@@ -271,11 +272,12 @@ impl Game {
             self.reversed = !self.reversed;
 
             // Only give the turn back to the player if there's less than 3 players
+
             if self.players.len() > 2 {
                 self.players.next_player(self.reversed);
-            } else {
-                self.placed_deck.get_mut(0).unwrap().owner = None;
             }
+
+            self.placed_deck.get_mut(0).unwrap().owner = None;
         }
 
         // Blocking
@@ -288,7 +290,6 @@ impl Game {
 
             for _ in 0..count {
                 self.players.next_player(self.reversed);
-                println!("skipped a turn");
             }
             // Reset block-stack and allow the same player to place cards by deowning the block-card.
             self.placed_deck.get_mut(0).unwrap().owner = None;
@@ -645,16 +646,13 @@ impl Card {
                         l.push(card);
                         continue;
                     }
-                }
-
-                // LAST CARD WAS A DRAW CARD PLACED BY ANOTHER "PLAYER"
-                if draw_cards.contains(&last_card.r#type) && last_card.owner != Some(owner) {
+                } else if draw_cards.contains(&last_card.r#type) && last_card.owner != Some(owner) {
                     // SPECIAL CARDS
                     if last_card.r#type == card.r#type {
                         l.push(card);
                         continue;
                     }
-                } else {
+                } else if last_card.owner != Some(owner) {
                     // SPECIAL CARDS
                     if special.contains(&card.r#type) {
                         l.push(card);

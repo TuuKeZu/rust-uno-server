@@ -217,53 +217,6 @@ impl Handler<Packet> for Lobby {
                     PacketType::Error(_, _) => {}      // Will only be sent to client
                 }
             }
-
-            /*
-            // Confirm that the packet has a type
-            if packet.json.get("type").is_some() {
-                // Resolve the packet's type
-                let r#type: String = packet.json.get("type").unwrap().to_string();
-                println!("{:#?}", packet.data);
-                let d: Result<PacketType> = serde_json::from_str(&packet.data);
-                println!("{:#?}", d);
-                match &r#type as &str {
-                    "\"COLOR-SWITCH\"" => {
-                        let p: Result<ColorSwitchPacket> =
-                            ColorSwitchPacket::try_parse(&packet.data);
-
-                        // Disallow request unless the player has the turn
-                        if room.game.current_turn.unwrap_or_default() != packet.id {
-                            room.game.emit(
-                                &packet.id,
-                                &HTMLError::to_json(HTMLError::new(401, "It's not your turn.")),
-                            );
-                        }
-
-                        match p {
-                            Ok(data) => {
-                                room.game.switch_color(data.color);
-                                room.game.update_card_status(&packet.id);
-                                room.game.update_allowed_status(&packet.id);
-                            }
-                            Err(e) => {
-                                room.game.emit(
-                                    &packet.id,
-                                    &HTMLError::to_json(HTMLError::new(400, &e.to_string())),
-                                );
-                            }
-                        }
-                    }
-
-                    &_ => {
-                        println!("Unknown type")
-                    }
-                }
-            } else {
-                room.game.emit(
-                    &packet.id,
-                    &HTMLError::to_json(HTMLError::new(400, "Missing request type.")),
-                );
-            }*/
         } else {
             println!("{:?}", self.rooms);
         }
