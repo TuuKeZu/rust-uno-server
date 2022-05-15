@@ -5,6 +5,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::time::SystemTime;
 use uuid::Uuid;
 
 // https://www.unorules.org/wp-content/uploads/2021/03/All-Uno-cards-how-many-cards-in-uno.png
@@ -25,35 +26,93 @@ pub struct Game {
     pub draw_stack: usize,
     pub block_stack: usize,
     pub reversed: bool,
+
+    pub statistics: GameStatistics,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GameStatistics {
+    pub start_time: Option<SystemTime>,
+    pub end_time: Option<SystemTime>,
+    pub player_count: usize,
+    pub spectator_count: usize,
+    pub cards_placed: usize,
+    pub cards_drawn: usize,
+}
+
+impl GameStatistics {
+    pub fn new() -> GameStatistics {
+        GameStatistics {
+            start_time: None,
+            end_time: None,
+            player_count: 0,
+            spectator_count: 0,
+            cards_placed: 0,
+            cards_drawn: 0,
+        }
+    }
+
+    pub fn game_started(&mut self) {
+        self.start_time = Some(SystemTime::now());
+    }
+
+    pub fn game_ended(&mut self) {
+        self.end_time = Some(SystemTime::now());
+    }
+
+    pub fn card_placed(&mut self) {
+        self.cards_placed += 1;
+    }
+
+    pub fn card_drawn(&mut self) {
+        self.cards_drawn += 1;
+    }
+}
+
+impl Default for GameStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct Players(VecDeque<(Uuid, Player)>);
 
 impl Players {
+    // Returns immutable list of keys representing players
     pub fn keys(&self) -> Vec<&Uuid> {
         self.0.iter().map(|pair| &pair.0).collect::<Vec<&Uuid>>()
     }
-
+    // Returns immutable list of players
+    pub fn players(&self) -> Vec<&Player> {
+        self.0.iter().map(|pair| &pair.1).collect::<Vec<&Player>>()
+    }
+    // Returns mutable list of keys representing players
     pub fn keys_mut(&self) -> Vec<Uuid> {
         self.0.iter().map(|pair| pair.0).collect::<Vec<Uuid>>()
     }
-
+    // Returns the number of players in game
     pub fn len(&self) -> usize {
         self.0.len()
     }
-
+    // Returns a boolean indicating weather there is players in the game
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    pub fn map(&self) -> Vec<(Uuid, String)> {
+    // Returns a list of tuples containing the uuid of the player and it's username
+    pub fn map_username(&self) -> Vec<(Uuid, String)> {
         self.0
             .iter()
             .map(|(k, p)| (*k, p.username.clone()))
             .collect()
     }
-
+    // Returns a list of players ordered by the number of cards they have (asc)
+    pub fn sort_by_cards(&self) -> VecDeque<&Player> {
+        let mut players = self.players().clone();
+        players.sort_by_key(|p| p.cards.len());
+        players.into()
+    }
+    // Returns immutable player with the uuid given as argument
     pub fn get(&self, key: &Uuid) -> Option<&Player> {
         let x = self
             .0
@@ -62,7 +121,7 @@ impl Players {
             .map(|pair| &pair.1);
         x
     }
-
+    // Returns mutable player with the uuid given as argument
     pub fn get_mut(&mut self, key: &Uuid) -> Option<&mut Player> {
         let x = self
             .0
@@ -71,21 +130,21 @@ impl Players {
             .map(|pair| &mut pair.1);
         x
     }
-
+    // Returns a boolean indicating weather there's a player with given uuid
     pub fn contains_key(&self, key: &Uuid) -> bool {
         self.keys().contains(&key)
     }
-
+    // Removes the player with given uuid
     pub fn remove(&mut self, key: &Uuid) {
         // l
         self.0
             .remove(self.0.iter().position(|pair| pair.0 == *key).unwrap());
     }
-
+    // Inserts a uuid-player pair
     pub fn insert(&mut self, key: Uuid, player: Player) {
         self.0.push_back((key, player));
     }
-
+    // Rotates the players list and returns the uuid of the current player.
     pub fn next_player(&mut self, reversed: bool) -> Uuid {
         if !reversed {
             let current = self.0.pop_back().unwrap();
@@ -97,7 +156,7 @@ impl Players {
             current.0
         }
     }
-
+    // Predicts which player would be next if 'next_player' would be called.
     pub fn predict_next(&self, reversed: bool) -> Uuid {
         let mut players = self.0.clone();
         if !reversed {
@@ -125,6 +184,7 @@ impl Game {
             draw_stack: 0,
             block_stack: 0,
             reversed: false,
+            statistics: GameStatistics::default(),
         }
     }
 
@@ -201,8 +261,25 @@ impl Game {
         }
 
         self.give_turn();
-
+        self.statistics.game_started();
         println!("Started!");
+    }
+
+    pub fn end(&mut self) {
+        println!("Player won the game");
+        self.statistics.game_ended();
+        self.statistics.player_count = self.players.len();
+        let mut placements = self.players.sort_by_cards();
+        let winner = placements.pop_front().unwrap();
+
+        let p = PacketType::WinUpdate(
+            winner.id,
+            winner.username.clone(),
+            placements.iter().map(|p| p.username.clone()).collect(),
+            self.statistics.clone(),
+        );
+
+        self.broadcast(&to_json(p));
     }
 
     pub fn give_turn(&mut self) {
@@ -263,6 +340,7 @@ impl Game {
             self.placed_deck.get_mut(0).unwrap().owner = None;
         }
 
+        // Last card will always be owned by the last person who placed it
         if self.placed_deck.get(0).unwrap().owner.is_some() {
             self.placed_deck.get_mut(0).unwrap().owner = self.current_turn;
         }
@@ -272,7 +350,6 @@ impl Game {
             self.reversed = !self.reversed;
 
             // Only give the turn back to the player if there's less than 3 players
-
             if self.players.len() > 2 {
                 self.players.next_player(self.reversed);
             }
@@ -295,7 +372,6 @@ impl Game {
             self.placed_deck.get_mut(0).unwrap().owner = None;
             self.block_stack = 0;
         }
-
         // Clear all the actions done by the player during this turn
         self.players
             .get_mut(&self.current_turn.unwrap())
@@ -306,7 +382,22 @@ impl Game {
         // Send back the 'EndTurnPacket' to client to indicate their turn has ended
         self.emit(&self.current_turn.unwrap(), &to_json(PacketType::EndTurn));
 
+        // Update the status
         self.update_card_status(&self.current_turn.unwrap());
+
+        // There is no cards left => Player wins
+        if self
+            .players
+            .get_mut(&self.current_turn.unwrap())
+            .unwrap()
+            .cards
+            .is_empty()
+        {
+            self.end();
+            return;
+        }
+
+        // Continue the game as normal
         self.give_turn();
     }
 
@@ -373,7 +464,10 @@ impl Game {
                 self.deck.extend(Card::generate_deck());
             }
 
-            l.push(self.deck.pop_front().unwrap());
+            // l.push(self.deck.pop_front().unwrap());
+            l.push(Card::new(Type::Five, Color::Red));
+
+            self.statistics.card_drawn();
         }
 
         l.iter_mut().for_each(|card| card.owner = Some(owner));
@@ -430,6 +524,8 @@ impl Game {
         self.placed_deck
             .push_front(p.cards.get(index).unwrap().clone());
         p.cards.remove(index);
+
+        self.statistics.card_placed();
     }
 
     pub fn switch_color(&mut self, color: Color) {
@@ -606,13 +702,15 @@ impl Card {
             Type::Reverse,
             Type::DrawTwo,
         ];
-
+        /*
         deck.iter()
             .filter(|card| !disallowed_types.contains(&card.r#type))
             .collect::<VecDeque<&Card>>()
             .pop_back()
             .unwrap()
             .clone()
+        */
+        Card::new(Type::Five, Color::Red)
     }
 
     fn get_allowed_cards(last_card: Card, deck: Vec<Card>, owner: Uuid) -> Vec<Card> {

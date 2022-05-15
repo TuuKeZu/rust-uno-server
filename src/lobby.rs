@@ -123,7 +123,7 @@ impl Handler<Packet> for Lobby {
                             &to_json(PacketType::GameData(
                                 packet.id,
                                 username,
-                                room.game.players.map(),
+                                room.game.players.map_username(),
                             )),
                         )
                     }
@@ -214,7 +214,8 @@ impl Handler<Packet> for Lobby {
                         room.game.update_allowed_status(&packet.id);
                     }
                     PacketType::TurnUpdate(_, _) => {} // Will only be sent to client
-                    PacketType::Error(_, _) => {}      // Will only be sent to client
+                    PacketType::Error(_, _) => {}
+                    PacketType::WinUpdate(_, _, _, _) => todo!(), // Will only be sent to client
                 }
             }
         } else {
