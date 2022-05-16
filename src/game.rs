@@ -191,10 +191,18 @@ impl Game {
     pub fn leave(&mut self, id: Uuid) {
         if self.players.contains_key(&id) {
             self.players.remove(&id);
+        } else if self.spectators.contains_key(&id) {
+            self.spectators.remove(&id);
+        } else {
+            return;
         }
 
-        if self.spectators.contains_key(&id) {
-            self.spectators.remove(&id);
+        if self.active {
+            self.broadcast(&to_json(PacketType::Message(
+                "Server".to_string(),
+                "Game ended due to one of the players leaving".to_string(),
+            )));
+            self.end();
         }
     }
 
@@ -243,7 +251,10 @@ impl Game {
         if host {
             self.emit(
                 id,
-                &to_json(PacketType::Message("You are the host".to_string())),
+                &to_json(PacketType::Message(
+                    "Server".to_string(),
+                    "You are the host".to_string(),
+                )),
             )
         }
     }
@@ -262,7 +273,11 @@ impl Game {
 
         self.give_turn();
         self.statistics.game_started();
-        println!("Started!");
+
+        self.broadcast(&to_json(PacketType::Message(
+            "Server".to_string(),
+            "The host has started the game".to_string(),
+        )));
     }
 
     pub fn end(&mut self) {
@@ -280,6 +295,8 @@ impl Game {
         );
 
         self.broadcast(&to_json(p));
+
+        self.active = false;
     }
 
     pub fn give_turn(&mut self) {
@@ -287,7 +304,10 @@ impl Game {
 
         self.emit(
             &current,
-            &to_json(PacketType::Message("Your turn".to_string())),
+            &to_json(PacketType::Message(
+                "Server".to_string(),
+                "Your turn".to_string(),
+            )),
         );
 
         self.broadcast(&to_json(PacketType::TurnUpdate(
@@ -535,10 +555,10 @@ impl Game {
             println!("{:#?}", &color);
             let c = self.placed_deck.get(0).unwrap().clone();
 
-            self.broadcast(&to_json(PacketType::Message(format!(
-                "Switched color to {}",
-                color
-            ))));
+            self.broadcast(&to_json(PacketType::Message(
+                "Server".to_string(),
+                format!("Switched color to {}", color),
+            )));
 
             self.placed_deck
                 .insert(0, Card::new_with_owner(c.r#type, color, c.owner));

@@ -75,10 +75,10 @@ impl Handler<Connect> for Lobby {
 
             room.game.emit(
                 &packet.self_id,
-                &to_json(PacketType::Message(format!(
-                    "{} is your own id",
-                    &packet.self_id
-                ))),
+                &to_json(PacketType::Message(
+                    "Server".to_string(),
+                    format!("{} is your own id", &packet.self_id),
+                )),
             );
         }
     }
@@ -130,8 +130,9 @@ impl Handler<Packet> for Lobby {
                     PacketType::GameData(_, _, _) => {} // Will only be sent to client
                     PacketType::Connect(_, _) => {}     // Will only be sent to client
                     PacketType::Disconnect(_, _) => {}  // Will only be sent to client
-                    PacketType::Message(content) => {
-                        room.game.broadcast(&to_json(PacketType::Message(content)));
+                    PacketType::Message(sender, content) => {
+                        room.game
+                            .broadcast(&to_json(PacketType::Message(sender, content)));
                     }
                     PacketType::StartGame(_options) => {
                         let host: bool = room.game.get_player(&packet.id).is_host;
@@ -215,7 +216,7 @@ impl Handler<Packet> for Lobby {
                     }
                     PacketType::TurnUpdate(_, _) => {} // Will only be sent to client
                     PacketType::Error(_, _) => {}
-                    PacketType::WinUpdate(_, _, _, _) => todo!(), // Will only be sent to client
+                    PacketType::WinUpdate(_, _, _, _) => {} // Will only be sent to client
                 }
             }
         } else {

@@ -1,4 +1,3 @@
-pub mod console;
 pub mod errors;
 pub mod game;
 pub mod lobby;

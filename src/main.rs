@@ -1,4 +1,3 @@
-mod console;
 mod errors;
 mod lobby;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -11,10 +10,10 @@ mod start_connection;
 use actix::Actor;
 use actix_web::{App, HttpServer};
 use clap::{Arg, Command};
+use colored::Colorize;
 use serde_derive::Deserialize;
 use start_connection::start_connection as start_connection_route;
 use std::fs;
-use colored::Colorize;
 
 #[derive(Deserialize)]
 struct Config {
@@ -55,7 +54,11 @@ async fn main() -> std::io::Result<()> {
 
     let chat_server = Lobby::default().start();
 
-    println!("{} {}" ,"Server Started at".green(), config.listen_addr.to_string().green().bold());
+    println!(
+        "{} {}",
+        "Server Started at".green(),
+        config.listen_addr.to_string().green().bold()
+    );
 
     HttpServer::new(move || {
         App::new()
